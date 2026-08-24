@@ -1,0 +1,5 @@
+# Yes, this project has one too. It is also the smallest possible smoke test of the thing:
+# if your implementation disagrees with git about these four lines, start there.
+__pycache__/
+*.pyc
+node_modules/
