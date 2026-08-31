@@ -26,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import build_corpus
+import gic
 
 CORPUS = os.path.join(HERE, "corpus", "cases.json")
 HAVE_GIT = shutil.which("git") is not None
@@ -405,6 +406,38 @@ class FrozenCorpusL2(unittest.TestCase):
         variants = collections.Counter(c.get("variant") for c in self.corpus["cases"])
         self.assertGreater(variants["dirs"], 20, "no directory cases in the corpus")
         self.assertGreater(variants["files"], 20)
+
+    def test_rule_files_reach_the_adapter_as_lines_like_level_1(self):
+        """PROTOCOL.md documents `rules` values as lists of lines, and level 1 has always sent
+        `patterns` that way. The corpus stores them newline-joined, and `ask_l2` used to forward
+        the string: an adapter written from the page did `for line in ...` over a str and got
+        one pattern per character. Both my adapters accepted either shape, so nothing failed.
+
+        This pins the wire, not the storage -- and the round-trip, since adapters re-join."""
+        sent = {}
+
+        class Spy(gic.Adapter):
+            def __init__(self):
+                pass
+
+            def _roundtrip(self, request_id, request, queries):
+                sent.update(request)
+                return [None] * len(queries)
+
+        case = self.corpus["cases"][0]
+        Spy().ask_l2(0, case["rules"], "*.tmp\n!keep.tmp", case["queries"])
+
+        self.assertEqual(sent["level"], 2)
+        for directory, value in sent["rules"].items():
+            self.assertIsInstance(value, list, "rules[%r] went out as %s, not a list of lines"
+                                  % (directory, type(value).__name__))
+            for line in value:
+                self.assertNotIn("\n", line, "a 'line' still contains a newline")
+        self.assertEqual(sent["exclude"], ["*.tmp", "!keep.tmp"])
+
+        # Joining back must reproduce the file byte for byte, or the measurement moved.
+        for directory, value in sent["rules"].items():
+            self.assertEqual("\n".join(value), case["rules"][directory])
 
     def test_the_slash_is_the_only_thing_that_says_directory(self):
         for case in self.corpus["cases"]:

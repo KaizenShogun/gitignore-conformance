@@ -46,6 +46,21 @@ def die(message):
     raise SystemExit(2)
 
 
+def _lines(text):
+    """Rule-file contents as a list of lines, which is what the protocol promises.
+
+    Level 1 has always sent `patterns` as a list; the level-2 corpus stores each rule file as
+    one newline-joined string, and until now `ask_l2` forwarded that string untouched. Both my
+    adapters happened to accept either shape, so the bench never noticed -- but an adapter
+    written from PROTOCOL.md would do `for line in rules[dir]` and iterate 878 characters
+    instead of 40 lines, and answer confidently. Normalising here means the two levels put the
+    same shape on the wire and the page is true about both.
+    """
+    if isinstance(text, list):
+        return text
+    return text.split("\n")
+
+
 class Adapter:
     """One long-lived subprocess speaking newline-delimited JSON."""
 
@@ -88,9 +103,10 @@ class Adapter:
 
     def ask_l2(self, request_id, rules, exclude, queries):
         """Same conversation, level-2 request shape. An all-null reply means "I only do level 1"."""
-        payload = {"id": request_id, "level": 2, "rules": rules, "queries": queries}
+        payload = {"id": request_id, "level": 2,
+                   "rules": {d: _lines(v) for d, v in rules.items()}, "queries": queries}
         if exclude:
-            payload["exclude"] = exclude
+            payload["exclude"] = _lines(exclude)
         return self._roundtrip(request_id, payload, queries)
 
     def close(self):

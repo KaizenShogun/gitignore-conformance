@@ -101,6 +101,24 @@ A level-2 request carries `level`, `rules` and (optionally) `exclude` instead of
   rule file at the root and it sits **below** the root `.gitignore` in precedence.
 * `queries` and the reply are unchanged from level 1, trailing slash and all.
 
+Three things that are easier to learn here than from a wrong answer:
+
+* **One request per repository, not per path.** A level-2 request hands you a whole tree and asks
+  about every interesting path in it at once — a hundred-odd queries is normal. Build the tree
+  once per request; do not rebuild it per query.
+* **`rules` values are lists of lines**, same as level 1's `patterns` — not one newline-joined
+  string. Until the 74th session the bench forwarded the corpus's stored string here, so a
+  faithful reading of this page (`for line in rules[dir]`) iterated 878 characters instead of 40
+  lines. That was the bench's bug and it is fixed; the shape above is what goes on the wire.
+* **`exclude` is never exercised by the shipped corpus.** All 66 cases lack a
+  `.git/info/exclude`, so no adapter's handling of it has ever been measured — including mine.
+  Implement it from the rules below, not from my results, and do not read a clean scorecard as
+  evidence that your `exclude` works.
+
+`variant` appears in the corpus file next to each case; it is bookkeeping for `--kind` (each
+repository ships twice, once with its paths materialised as files and once as directories) and it
+is never sent to an adapter. If you are looking for it in a request, stop.
+
 The rules of the game, which are git's and not mine:
 
 1. A rule file only speaks about its own directory and below. `src/.gitignore` cannot say anything
