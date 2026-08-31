@@ -11,6 +11,7 @@ and that the frozen corpus still says what it says.
 
 Tests needing `git` skip themselves without it. Nothing here needs the network.
 """
+import collections
 import hashlib
 import json
 import os
@@ -384,6 +385,81 @@ class FrozenCorpus(unittest.TestCase):
         """Criterion: usable with no network, no git and no Python. Guard it in a test."""
         with open(CORPUS, "rb") as fh:
             json.loads(fh.read().decode("utf-8"))
+
+
+class FrozenCorpusL2(unittest.TestCase):
+    """The level-2 corpus, offline. Its own class because its shape is not level 1's."""
+
+    @classmethod
+    def setUpClass(cls):
+        path = os.path.join(HERE, "corpus", "cases_l2.json")
+        if not os.path.exists(path):
+            raise unittest.SkipTest("no corpus/cases_l2.json -- run build_oracle_l2.py")
+        with open(path, encoding="utf-8") as fh:
+            cls.corpus = json.load(fh)
+
+    def test_a_repo_is_asked_about_directories_too(self):
+        """The hole this closes: until the 67th session every query was a file, so no prune
+        could ever be caught -- and pruning a directory is the one mistake that is wrong about
+        everything below it at once."""
+        variants = collections.Counter(c.get("variant") for c in self.corpus["cases"])
+        self.assertGreater(variants["dirs"], 20, "no directory cases in the corpus")
+        self.assertGreater(variants["files"], 20)
+
+    def test_the_slash_is_the_only_thing_that_says_directory(self):
+        for case in self.corpus["cases"]:
+            want_dir = case["variant"] == "dirs"
+            for query, meta in zip(case["queries"], case["meta"]):
+                self.assertEqual(query.endswith("/"), want_dir, query)
+                self.assertEqual(meta["kind"], "dir" if want_dir else "file", query)
+                self.assertFalse(query.startswith(("/", "./")), query)
+
+    def test_kind_selects_the_variant_instead_of_being_swallowed(self):
+        """A level-2 case is a repository and the kind lives in its queries, so the level-1
+        `c["kind"]` filter matched nothing and --kind was accepted and ignored: two runs with
+        opposite flags printed the same 4,373 queries. A flag that decides in silence is worse
+        than one that refuses."""
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        argv = write_adapter(tmp, """
+            for line in sys.stdin:
+                req = json.loads(line)
+                sys.stdout.write(json.dumps(
+                    {"id": req["id"], "ignored": [True] * len(req["queries"])}) + "\\n")
+                sys.stdout.flush()
+        """)
+        path = os.path.join(HERE, "corpus", "cases_l2.json")
+        seen = {}
+        for kind, variant in (("file", "files"), ("dir", "dirs")):
+            proc = run_gic(path, argv, extra=["--level", "2", "--json",
+                                              "--kind", kind, "--limit", "2"])
+            report = json.loads(proc.stdout)
+            want = [c for c in self.corpus["cases"] if c["variant"] == variant][:2]
+            self.assertEqual(report["checked"], sum(len(c["meta"]) for c in want), kind)
+            self.assertEqual(report["repos"], 2, kind)
+            # An always-True adapter is wrong about everything git does not ignore, so the
+            # divergence list is a free sample of what was actually asked -- and every path in
+            # it must have the shape of the half we selected.
+            self.assertTrue(report["divergences"], "nothing was asked, the check is vacuous")
+            for record in report["divergences"]:
+                self.assertEqual(record["kind"], kind, record["path"])
+                self.assertEqual(record["path"].endswith("/"), kind == "dir", record["path"])
+            seen[kind] = [r["path"] for r in report["divergences"]]
+        self.assertNotEqual(seen["file"], seen["dir"])
+
+    def test_the_two_variants_ask_the_same_tree(self):
+        """Same rules, same names, one materialised as files and one as directories. If the
+        trees drifted apart the two numbers would not be comparable, which is the whole point."""
+        by_repo = collections.defaultdict(dict)
+        for case in self.corpus["cases"]:
+            by_repo[case["repo"]][case["variant"]] = case
+        paired = 0
+        for repo, pair in by_repo.items():
+            if len(pair) != 2:
+                continue
+            paired += 1
+            self.assertEqual(pair["files"]["rules"], pair["dirs"]["rules"], repo)
+        self.assertGreater(paired, 20)
 
 
 if __name__ == "__main__":

@@ -3,3 +3,9 @@
 __pycache__/
 *.pyc
 node_modules/
+
+# Upstream files as downloaded, kept so a rebuild costs no network. Re-fetchable in one command,
+# so it is not the artefact -- `corpus/cases.json` is.
+corpus/_cache*/
+# Scratch probes that live next to the code for an afternoon and answer one question.
+_*.py

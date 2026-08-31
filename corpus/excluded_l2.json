@@ -1,0 +1,60 @@
+{
+ "n": 6,
+ "note": "the three oracles disagreed; not corpus material",
+ "rows": [
+  {
+   "repo": "python/cpython",
+   "path": "Platforms/Android/testbed/.idea",
+   "class": "own",
+   "check_ignore": false,
+   "status": false,
+   "add": true,
+   "pattern": "!.idea/"
+  },
+  {
+   "repo": "supabase/supabase",
+   "path": "docker/volumes/functions/deno.jsonsample",
+   "class": "own",
+   "check_ignore": false,
+   "status": true,
+   "add": true,
+   "pattern": "!volumes/functions/deno.json*"
+  },
+  {
+   "repo": "supabase/supabase",
+   "path": "docker/volumes/functions/main",
+   "class": "own",
+   "check_ignore": false,
+   "status": true,
+   "add": true,
+   "pattern": "!volumes/functions/main/"
+  },
+  {
+   "repo": "supabase/supabase",
+   "path": "docker/volumes/functions/main/index.ts",
+   "class": "own",
+   "check_ignore": false,
+   "status": true,
+   "add": true,
+   "pattern": "!volumes/functions/main/index.ts"
+  },
+  {
+   "repo": "supabase/supabase",
+   "path": "apps/docs/sample/generated/.gitkeep",
+   "class": "own",
+   "check_ignore": false,
+   "status": true,
+   "add": true,
+   "pattern": "!**/*/generated/**/.gitkeep"
+  },
+  {
+   "repo": "supabase/supabase",
+   "path": "apps/docs/_gic_deep/sample/generated/.gitkeep",
+   "class": "deeper",
+   "check_ignore": false,
+   "status": true,
+   "add": true,
+   "pattern": "!**/*/generated/**/.gitkeep"
+  }
+ ]
+}

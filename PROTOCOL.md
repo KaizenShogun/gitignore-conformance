@@ -3,6 +3,19 @@
 One page. If your language can read a line from stdin and write a line to stdout, it can be
 measured here — the bench never imports your library, it talks to a process.
 
+There are two levels, and they are two different questions asked of two different kinds of code.
+Say which one you implement; nobody is graded on a promise they never made.
+
+| level | the question | who can answer it |
+|---|---|---|
+| **1** | given *one* set of `.gitignore` lines, which paths are ignored? | a pattern-matching library — `pathspec`, `gitignore_parser`, `node-ignore` |
+| **2** | given a *tree* of rule files, which paths are ignored? | whatever walks the repo — the tool, not the library |
+
+Level 1 is **frozen**. The request shape below will not change; new corpus cases can be added, the
+protocol cannot. If you implemented it, you stay implemented.
+
+## Level 1 — one file's worth of patterns
+
 ## Shape
 
 `gic.py` starts your adapter **once** and speaks newline-delimited JSON over stdin/stdout.
@@ -62,3 +75,48 @@ taken out.
   read as a malformed reply, and the bench will tell you so and stop.
 * **One process, many requests.** Build your matcher per request; the patterns change every time.
   Forty-three requests is the whole corpus, so per-request setup cost is not worth optimising.
+
+## Level 2 — the tree, which is where the tools live
+
+Level 1 hands you the lines of one file. Real repositories do not have one file: they have a
+`.gitignore` per directory, each one scoped to its own subtree, plus `.git/info/exclude` sitting
+underneath the lot. Deciding which of those applies to a given path is **not** something
+`pathspec`, `gitignore_parser` or `node-ignore` claim to do — none of them takes a directory. It is
+done by the caller, in a loop, usually in about eight lines, and that is precisely why it is worth
+measuring separately: the eight lines are nobody's job to test.
+
+A level-2 request carries `level`, `rules` and (optionally) `exclude` instead of `patterns`:
+
+```json
+{"id": 0, "level": 2,
+ "rules": {"": ["*.log", "build/"], "src": ["!*.log"], "docs/api": ["*.md"]},
+ "exclude": ["*.tmp"],
+ "queries": ["a.log", "src/b.log", "docs/api/x.md", "src/c.tmp"]}
+```
+
+* `rules` — one entry per rule file that exists in the tree. The key is the **directory that
+  contains it**, repo-relative, `/`-separated, no trailing slash; the root is the empty string `""`.
+  The value is that file's lines, verbatim and in order, exactly as in level 1.
+* `exclude` — the lines of `.git/info/exclude`, or absent if the repo has none. It behaves as a
+  rule file at the root and it sits **below** the root `.gitignore` in precedence.
+* `queries` and the reply are unchanged from level 1, trailing slash and all.
+
+The rules of the game, which are git's and not mine:
+
+1. A rule file only speaks about its own directory and below. `src/.gitignore` cannot say anything
+   about `docs/`.
+2. Deeper wins. Within one file, the **last** matching line wins. Between files, the one in the
+   **deeper** directory wins outright — a `!*.log` in `src/.gitignore` re-includes `src/b.log` even
+   though the root said `*.log`.
+3. And the trap underneath all of it: *"It is not possible to re-include a file if a parent
+   directory of that file is excluded"*. If the root ignores `build/`, no `!` anywhere below it
+   brings `build/x.c` back, because git never walks in to read the rule.
+
+**Not in level 2, and said out loud so nobody discovers it by surprise:** `core.excludesFile` and
+the per-user global ignore (they are machine state, not repository state), `.gitattributes`, the
+index — a tracked file is never "ignored" no matter what any of these say, and the bench only ever
+asks about untracked paths.
+
+**If you only do level 1, say so by declining.** Answer a level-2 request with `null` for every
+query. That is reported as *declined*, not as a divergence, and it is the honest answer: your
+library was asked something it never offered to do.
