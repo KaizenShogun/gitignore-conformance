@@ -233,6 +233,54 @@ The black rows became two bug reports because they came with a path, a pattern a
 decide whether a flat list is a bug or a documented approximation. Ten minutes with `--level 2` on
 your own walker is cheaper than finding out from a user who shipped a file they meant to ignore.
 
+### The third rule file: `.git/info/exclude`
+
+Git reads rules from three places, and the tree of `.gitignore` files is only two of them. The
+third is `.git/info/exclude` — a root-level rule file that sits just under the root `.gitignore`
+in precedence, and that nobody commits, which is exactly why no corpus built from public
+repositories contains one. So this one is **synthetic, and it cannot be otherwise**: a real
+`.git/info/exclude` never travels with a repository. Everything else in the case is the repo's
+own rule tree; the four lines of `exclude` are mine, and `build_oracle_l2.py exclude` writes them.
+
+It ships as its own corpus, `corpus/cases_l2_exclude.json`, because its denominator is not the
+other one's and mixing them is how a number becomes unreadable:
+
+```
+gic.py --level 2 --corpus corpus/cases_l2_exclude.json -- <your adapter>
+```
+
+33 repositories, 99 queries, three per repo — and only **33 of them decide anything**:
+
+| class | queries | git ignores | **decisive** | what it catches |
+|---|---|---|---|---|
+| `exclude_only` | 33 | 33 | **33** | named in `exclude` and nowhere else: miss the file, fail |
+| `exclude_overridden` | 33 | 0 | **0** | `!` in the root `.gitignore` beats `exclude` |
+| `exclude_order` | 33 | 33 | **0** | `!` in `exclude` loses to the root `.gitignore` |
+
+The generator builds every case twice, with and without the `exclude`, and marks a query
+**decisive** only if git's verdict actually moves. Two of the three classes don't move: they are
+order controls, and against a subject that never opens the file they measure nothing at all. They
+stay in the corpus — they bite the moment you *do* read it and stack it in the wrong order — but
+they are not scored. Reporting "2 of 3 correct" here would have been smoke.
+
+Against the two subjects above, the decisive column is a shutout:
+
+| subject | decisive queries | wrong | how it fails |
+|---|---|---|---|
+| `files-to-prompt` | 33 | **33** | *(no matching pattern)* |
+| `psf/black` 26.5.1 | 32 | **32** | *(no matching pattern)*, declines the `!`-only repo |
+
+That is "not implemented", not "implemented wrong", and I checked it a third way rather than
+inferring it from a scorecard: `grep -rn 'info/exclude\|excludesFile'` over both checkouts returns
+nothing, and `files-to-prompt`'s `cli.py` opens `os.path.join(path, ".gitignore")` and no other
+file. **This number does not join the nine.** The nine are `.gitignore` divergences; this is a
+rule file neither tool ever opens, and adding them would be the same sin as folding directory
+queries into a file-only denominator. It gets its own line: *`.git/info/exclude` — 33 decisive
+queries, 0 implemented by either subject.*
+
+Whether that's a bug depends on what the tool claims. A walker that says "respects your
+`.gitignore`" is telling the truth. One that says "respects your ignore rules" is not.
+
 ## What's real and what's derived — read this before quoting a number
 
 The corpus is honest about its own construction, in public, because a bench that hides its
@@ -248,7 +296,9 @@ trying to replace.
 * the verdict — **git 2.55.0**, asked three separate ways: `git check-ignore`, `git add --dry-run`
   and `git status --ignored`. A case only enters the corpus if all three agree. Disagreements are
   dropped, never guessed, and counted in `corpus/excluded.json`. **The count is zero**: the 15%
-  ceiling I wrote down before looking never came close to mattering.
+  ceiling I wrote down before looking never came close to mattering. The `exclude` corpus is held
+  to the same rule and passes it twice — its 99 queries and the 99 no-`exclude` controls it is
+  compared against, zero disagreements (`n_excluded` in the file itself).
 
 **Derived:** the paths themselves. From a repository's own patterns I concretise one path per
 pattern (`*.log` → `sample.log`) plus its near neighbours (`sample.log.keepme`, `keepsample.log`,

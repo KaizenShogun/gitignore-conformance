@@ -110,10 +110,12 @@ Three things that are easier to learn here than from a wrong answer:
   string. Until the 74th session the bench forwarded the corpus's stored string here, so a
   faithful reading of this page (`for line in rules[dir]`) iterated 878 characters instead of 40
   lines. That was the bench's bug and it is fixed; the shape above is what goes on the wire.
-* **`exclude` is never exercised by the shipped corpus.** All 66 cases lack a
-  `.git/info/exclude`, so no adapter's handling of it has ever been measured — including mine.
-  Implement it from the rules below, not from my results, and do not read a clean scorecard as
-  evidence that your `exclude` works.
+* **`exclude` is exercised by one corpus only, and it ships apart.** The 66 cases of
+  `cases_l2.json` all lack a `.git/info/exclude`; a clean scorecard there says nothing about
+  yours. `cases_l2_exclude.json` is the file that asks — 33 repositories, 99 queries, of which
+  **33 are decisive** (their verdict moves when the field is removed; the other 66 are order
+  controls that only bite once you read the file at all). Its denominator is not the other
+  corpus's, which is exactly why it is a separate file and a separate number.
 
 `variant` appears in the corpus file next to each case; it is bookkeeping for `--kind` (each
 repository ships twice, once with its paths materialised as files and once as directories) and it

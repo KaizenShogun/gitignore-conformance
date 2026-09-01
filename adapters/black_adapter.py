@@ -108,6 +108,20 @@ class CapturingReport(REPORT):
             self.gitignored.add(Path(path))
 
 
+def text_of(lines, what):
+    """The wire says list-of-lines. Anything else is a protocol violation, so say so loudly.
+
+    This used to read `"\\n".join(lines) if isinstance(lines, list) else lines`, and that hedge
+    is exactly how the level-2 wire spent fifteen sessions sending strings where PROTOCOL.md
+    promised lists without a single test going red. Accepting both shapes is not robustness: it
+    switches off the only detector there was.
+    """
+    if not isinstance(lines, list):
+        raise TypeError("%s must be a list of lines per PROTOCOL.md, got %s"
+                        % (what, type(lines).__name__))
+    return "\n".join(lines)
+
+
 def build_tree(root, rules, exclude, queries):
     """Write the rule files and the queried paths. Returns the paths we could not create."""
     undecidable = set()
@@ -116,13 +130,13 @@ def build_tree(root, rules, exclude, queries):
         target = os.path.join(root, directory) if directory else root
         os.makedirs(target, exist_ok=True)
         with open(os.path.join(target, ".gitignore"), "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines) if isinstance(lines, list) else lines)
+            fh.write(text_of(lines, "rules[%r]" % directory))
 
     if exclude:
         info = os.path.join(root, ".git", "info")
         os.makedirs(info, exist_ok=True)
         with open(os.path.join(info, "exclude"), "w", encoding="utf-8") as fh:
-            fh.write("\n".join(exclude) if isinstance(exclude, list) else exclude)
+            fh.write(text_of(exclude, "exclude"))
 
     # Longest first: if one query is a parent directory of another, the deeper one wins and
     # the shallower becomes a directory we cannot represent as a file.

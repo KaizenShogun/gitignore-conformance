@@ -56,6 +56,7 @@ from build_corpus import check_ignore, concretize, git, split_patterns  # noqa: 
 CACHE = os.path.join(HERE, "corpus", "_cache_l2")
 OUT = os.path.join(HERE, "corpus", "cases_l2.json")
 OUT_BAD = os.path.join(HERE, "corpus", "excluded_l2.json")
+OUT_EXC = os.path.join(HERE, "corpus", "cases_l2_exclude.json")
 
 MAX_NESTED_DIRS = 6      # rule files per repo, beyond the root
 MAX_PATTERNS = 6         # patterns taken from each rule file
@@ -282,6 +283,176 @@ def build_repo_case(repo, entry, workdir, as_dirs=False):
              "rules": rules, "queries": out_q, "ignored": out_i, "meta": meta}, bad)
 
 
+# ---------------------------------------------------------------------------------------------
+# The `exclude` variant.
+#
+# `PROTOCOL.md` has documented `.git/info/exclude` since the level shipped, both adapters write it,
+# and until now not one of the 66 cases carried the field -- a promised wire shape nobody had ever
+# seen go down the cable. Real repositories cannot supply it (the file lives in `.git/`, so it
+# never travels), so the three rule lines below are **synthetic**, and that is said in the README
+# rather than left for a reader to work out.
+#
+# Three queries, chosen so they cannot all pass for the same reason (75a_precedencia.py confirmed
+# each verdict against all three oracles before any of this was written):
+#
+#   exclude_only        exclude ignores it, nothing else mentions it     -> git ignores
+#   exclude_overridden  exclude ignores it, the root .gitignore says `!` -> git does NOT ignore
+#   exclude_order       the root ignores it, exclude says `!`            -> git ignores
+#
+# The last two are order controls: a tool that stacks `exclude` *above* the root `.gitignore` gets
+# exactly those two wrong and `exclude_only` right. But a tool that never opens the file at all
+# also gets some of them "right", for a reason that has nothing to do with what is being measured
+# -- so each query is built twice, with and against the `exclude`, and only the ones whose verdict
+# actually moves are marked `decisive`. Counting the rest as passes is the `--kind` sin again.
+EXC_ONLY = "midas_e_only"
+EXC_NEG = "midas_e_neg"
+EXC_ORDER = "midas_g"
+EXC_HEAD = "# synthetic, written by build_oracle_l2.py for the gitignore-conformance corpus\n"
+EXCLUDE_TEXT = EXC_HEAD + "%s\n%s\n!%s\n" % (EXC_ONLY, EXC_NEG, EXC_ORDER)
+ROOT_EXTRA = EXC_HEAD + "!%s\n%s\n" % (EXC_NEG, EXC_ORDER)
+EXC_QUERIES = [(EXC_ONLY, "exclude_only"),
+               (EXC_NEG, "exclude_overridden"),
+               (EXC_ORDER, "exclude_order")]
+
+
+def collect_rules(repo, entry):
+    """The rule tree this repo contributes: root plus the spread of nested files."""
+    rules = {}
+    root_text = load_rule_file(repo, "")
+    if root_text is not None:
+        rules[""] = root_text
+    for d in pick_dirs(entry):
+        text = load_rule_file(repo, d)
+        if text is not None:
+            rules[d] = text
+    return rules
+
+
+def ask_git(workdir, rules, exclude_text, paths):
+    """Materialise one tree and return {path: (check_ignore, status, add-n)} -- three oracles."""
+    repo_dir = os.path.join(workdir, "r")
+    os.makedirs(repo_dir)
+    git(["init", "-q"], repo_dir)
+    git(["config", "user.email", "corpus@example.invalid"], repo_dir)
+    git(["config", "user.name", "corpus"], repo_dir)
+    for d, text in rules.items():
+        full = os.path.join(repo_dir, d, ".gitignore") if d else os.path.join(repo_dir,
+                                                                             ".gitignore")
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    if exclude_text is not None:
+        info = os.path.join(repo_dir, ".git", "info")
+        os.makedirs(info, exist_ok=True)
+        with open(os.path.join(info, "exclude"), "w", encoding="utf-8") as fh:
+            fh.write(exclude_text)
+    for path in paths:
+        with open(os.path.join(repo_dir, path), "w", encoding="utf-8") as fh:
+            fh.write("x\n")
+
+    verdict = check_ignore(repo_dir, paths)
+    res = git(["status", "--ignored", "--porcelain", "-z"], repo_dir)
+    hidden = {e[3:] for e in res.stdout.split("\0") if e.startswith("!! ")}
+    res = git(["add", "-A", "-n"], repo_dir)
+    staged = set()
+    for line in res.stdout.split("\n"):
+        line = line.strip()
+        if line.startswith("add '") and line.endswith("'"):
+            staged.add(line[5:-1])
+    out = {}
+    for path in paths:
+        entry_v = verdict.get(path)
+        if entry_v is None:
+            continue
+        _, a, decided_by = entry_v
+        out[path] = (a, path in hidden, path not in staged, decided_by)
+    return out
+
+
+def build_exclude_case(repo, entry, workdir):
+    """One case per repo: the real rule tree, plus a synthetic `.git/info/exclude`."""
+    rules = collect_rules(repo, entry)
+    if not [k for k in rules if k]:
+        return None, []          # same gate as the other two variants, so the repo set matches
+    root = rules.get("", "")
+    if root and not root.endswith("\n"):
+        root += "\n"
+    rules = dict(rules)
+    rules[""] = root + ROOT_EXTRA
+
+    paths = [p for p, _ in EXC_QUERIES]
+    with_exc = ask_git(os.path.join(workdir, "with"), rules, EXCLUDE_TEXT, paths)
+    without = ask_git(os.path.join(workdir, "without"), rules, None, paths)
+
+    out_q, out_i, meta, bad = [], [], [], []
+    for path, cls in EXC_QUERIES:
+        got, got_wo = with_exc.get(path), without.get(path)
+        if got is None or got_wo is None:
+            continue
+        a, b, c, decided_by = got
+        if not (a == b == c):
+            bad.append({"repo": repo, "path": path, "class": cls, "check_ignore": a,
+                        "status": b, "add": c, "pattern": decided_by})
+            continue
+        if not (got_wo[0] == got_wo[1] == got_wo[2]):
+            bad.append({"repo": repo, "path": path, "class": cls + "/control",
+                        "check_ignore": got_wo[0], "status": got_wo[1], "add": got_wo[2],
+                        "pattern": got_wo[3]})
+            continue
+        out_q.append(path)
+        out_i.append(a)
+        meta.append({"class": cls, "owner": "", "from_pattern": None,
+                     "git_pattern": decided_by, "kind": "file",
+                     "decisive": a != got_wo[0], "without_exclude": got_wo[0]})
+    if not out_q:
+        return None, bad
+    return ({"repo": repo, "branch": entry.get("branch"), "level": 2, "variant": "exclude",
+             "rules": rules, "exclude": EXCLUDE_TEXT, "queries": out_q, "ignored": out_i,
+             "meta": meta}, bad)
+
+
+def build_exclude():
+    """Written to its own file. The shipped 66 cases are what the published 9/4373 refers to;
+    they are not regenerated here, and merging is a separate, deliberate step."""
+    index = load_index()
+    cases, bad = [], []
+    for repo in sorted(index):
+        workdir = tempfile.mkdtemp(prefix="gic_l2x_")
+        try:
+            case, repo_bad = build_exclude_case(repo, index[repo], workdir)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+        bad.extend(repo_bad)
+        if case is None:
+            continue
+        cases.append(case)
+        dec = sum(m["decisive"] for m in case["meta"])
+        print("  %-40s %d queries, %d ignored, %d decisive" %
+              (repo, len(case["queries"]), sum(case["ignored"]), dec))
+
+    ver = subprocess.run(["git", "--version"], capture_output=True, text=True).stdout.strip()
+    doc = {"level": 2, "oracle": ver, "n_repos": len({c["repo"] for c in cases}),
+           "n_cases": len(cases), "n_queries": sum(len(c["queries"]) for c in cases),
+           "n_decisive": sum(m["decisive"] for c in cases for m in c["meta"]),
+           "n_excluded": len(bad), "skipped_repos": [], "cases": cases}
+    with open(OUT_EXC, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=1, sort_keys=False)
+    print()
+    print("oracle    : %s" % doc["oracle"])
+    print("repos     : %d" % doc["n_repos"])
+    print("queries   : %d   (decisive: %d)" % (doc["n_queries"], doc["n_decisive"]))
+    print("excluded  : %d" % doc["n_excluded"])
+    for _, cls in EXC_QUERIES:
+        rows = [(m, ig) for c in cases for m, ig in zip(c["meta"], c["ignored"])
+                if m["class"] == cls]
+        if rows:
+            print("  %-19s %3d queries, %3d ignored, %3d decisive" %
+                  (cls, len(rows), sum(ig for _, ig in rows),
+                   sum(m["decisive"] for m, _ in rows)))
+    print()
+    print("wrote %s" % OUT_EXC)
+
+
 def build():
     index = load_index()
     cases, bad, skipped = [], [], []
@@ -374,5 +545,7 @@ def report(doc=None):
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "report":
         report()
+    elif len(sys.argv) > 1 and sys.argv[1] == "exclude":
+        build_exclude()
     else:
         build()

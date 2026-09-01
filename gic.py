@@ -34,6 +34,13 @@ DEFAULT_CORPUS_L2 = os.path.join(HERE, "corpus", "cases_l2.json")
 # and `root` are what it cannot.
 CLASSES = ("own", "deeper", "from_root", "sibling", "root")
 
+# The `exclude` variant asks a different question -- about `.git/info/exclude`, a rule file that
+# is not a `.gitignore` -- so its classes live apart and its numbers never join the ones above.
+# Only `exclude_only` is decisive: the other two keep git's verdict when the field is removed,
+# so against a subject that never opens the file they measure nothing. See `decisive` in the meta.
+EXCLUDE_CLASSES = ("exclude_only", "exclude_overridden", "exclude_order")
+ALL_CLASSES = CLASSES + EXCLUDE_CLASSES
+
 
 def die(message):
     """Exit 2. Reserved for "I could not run the measurement at all", never for a failing run.
@@ -195,19 +202,28 @@ def report_l2(divergences, declined, declining, cases, args):
     answered = [c for c in cases
                 if (c["repo"], c.get("variant", "files")) not in declining_repos]
     totals = collections.Counter()
+    decisive = collections.Counter()
     for case in answered:
         for meta in case["meta"]:
             totals[meta["class"]] += 1
+            # `decisive` is absent from the two shipped variants: there every query moves with
+            # the rule files, so the flag would be True everywhere and says nothing.
+            if meta.get("decisive", True):
+                decisive[meta["class"]] += 1
     bad = collections.Counter(rec["class"] for rec, _ in divergences)
+    bad_decisive = collections.Counter(rec["class"] for rec, _ in divergences
+                                       if rec.get("decisive", True))
     skipped = collections.Counter(rec["class"] for rec in declined)
+    shown = [c for c in ALL_CLASSES if totals[c]]
 
     if args.json:
         json.dump({
             "level": 2, "repos": len(answered), "repos_in_corpus": len(cases),
             "checked": sum(totals.values()),
             "declining_cases": ["%s [%s]" % (r, v) for r, v in declining],
-            "by_class": {c: {"cases": totals[c], "divergences": bad[c], "declined": skipped[c]}
-                         for c in CLASSES if totals[c]},
+            "by_class": {c: {"cases": totals[c], "divergences": bad[c], "declined": skipped[c],
+                             "decisive": decisive[c], "decisive_divergences": bad_decisive[c]}
+                         for c in shown},
             "divergences": [dict(rec, adapter=got) for rec, got in divergences],
         }, sys.stdout, indent=1)
         sys.stdout.write("\n")
@@ -223,14 +239,19 @@ def report_l2(divergences, declined, declining, cases, args):
 
     print("level 2: %d of %d repositories answered, %d queries, oracle git.\n"
           % (len(answered), len(cases), sum(totals.values())))
-    print("  %-10s %8s %8s %8s   %s" % ("class", "cases", "wrong", "declined", ""))
-    for cls in CLASSES:
-        if not totals[cls]:
-            continue
+    print("  %-18s %8s %8s %8s %9s %8s" %
+          ("class", "cases", "wrong", "declined", "decisive", "wrong"))
+    for cls in shown:
         rate = 100.0 * bad[cls] / totals[cls]
-        print("  %-10s %8d %8d %8d   %5.1f%% wrong" % (cls, totals[cls], bad[cls],
-                                                       skipped[cls], rate))
-    print("  %-10s %8d %8d %8d" % ("all", sum(totals.values()), len(divergences), len(declined)))
+        print("  %-18s %8d %8d %8d %9d %8d   %5.1f%% wrong" %
+              (cls, totals[cls], bad[cls], skipped[cls], decisive[cls], bad_decisive[cls], rate))
+    print("  %-18s %8d %8d %8d %9d %8d" %
+          ("all", sum(totals.values()), len(divergences), len(declined),
+           sum(decisive.values()), sum(bad_decisive.values())))
+    if sum(decisive.values()) != sum(totals.values()):
+        print("\n  the two right-hand columns are the ones that count: a query is decisive only\n"
+              "  if its verdict moves when the field under test is removed. The rest keep git's\n"
+              "  answer either way, so getting them right proves nothing about the field.")
 
     if not divergences:
         print("\nno divergences: every answered query was git's answer.")
