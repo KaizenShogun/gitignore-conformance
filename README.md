@@ -233,6 +233,48 @@ The black rows became two bug reports because they came with a path, a pattern a
 decide whether a flat list is a bug or a documented approximation. Ten minutes with `--level 2` on
 your own walker is cheaper than finding out from a user who shipped a file they meant to ignore.
 
+### One repository where the pruning costs a real file
+
+Everything above is my corpus: I chose the queries, even if git wrote the answers. So here is the
+same finding with nothing of mine in it — `nodejs/node`'s `.gitignore`, which says out loud what it
+wants:
+
+```
+# Only track the shared base devcontainer.json; ignore everything else under .devcontainer
+!.devcontainer/
+.devcontainer/**
+!.devcontainer/base/
+!.devcontainer/base/devcontainer.json
+```
+
+git agrees with the comment. Put those lines and that file in a tree and `git add -A -n` stages
+`.devcontainer/base/devcontainer.json`. It is tracked on purpose.
+
+`files-to-prompt` prints nothing from under `.devcontainer/`. Not because its matcher decided the
+file was ignored — asked directly on that tree, its own `should_ignore` returns **False** for
+`.devcontainer/base/devcontainer.json` and **True** for `.devcontainer`. The True on the *directory*
+prunes the branch before the file is ever reached, so the matcher that would have got it right never
+gets asked. That pair is the whole attribution; without it, a tool that fails 13.1% of level-1 cases
+could be dropping the file for any reason at all. `black`'s `gen_python_files` prunes the same
+directory. It loses nothing here — a `.json` was never in its `include` — but the prune is the same
+prune, so this is a property of the layer and not of one author.
+
+The mechanism is that `.devcontainer/**` covers the *contents* of the directory and not the
+directory, which `!.devcontainer/` re-includes. git therefore still walks in and honours the last
+negation. A caller that asks `match_file(".devcontainer/")` gets `True` and stops.
+
+And here is where this belongs, which is not an upstream tracker: `pathspec` answers correctly when
+you ask it the tree question instead of the per-path one. `GitIgnoreSpec.match_tree_files(root)` on
+that same tree ignores exactly `.devcontainer/otro/cosa.txt` and lets `devcontainer.json` through.
+The library has a sane API for this. The divergence exists only in the eight lines of glue that call
+`match_file(dir + "/")` and prune — which is the level-2 thesis restated in one real repository.
+
+How common is it? Of the 43 repositories the harvested `.gitignore` files come from, 5 have the
+lexical shape — a `dir/**` rule
+with a negation somewhere underneath — and **1** actually loses a tracked file to it. One in
+forty-three is not an epidemic. It is also not zero, and what it costs is a file a repository went
+out of its way to keep.
+
 ### The third rule file: `.git/info/exclude`
 
 Git reads rules from three places, and the tree of `.gitignore` files is only two of them. The
