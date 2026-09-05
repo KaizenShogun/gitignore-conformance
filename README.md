@@ -275,6 +275,64 @@ with a negation somewhere underneath — and **1** actually loses a tracked file
 forty-three is not an epidemic. It is also not zero, and what it costs is a file a repository went
 out of its way to keep.
 
+### Three recipes over one unchanged library
+
+If the level-2 divergence lives in the caller's eight lines, the cheap way to prove it is to hold
+the library still and change only those lines. Same `pathspec` 1.1.1, same 66 cases, same 4,463
+queries, same oracle — [`recipes.py`](recipes.py):
+
+| recipe | wrong | conformant | what it is |
+|---|---|---|---|
+| flat | **1,253** | 71.925 % | concatenate every rule file into one spec, ask it the full path |
+| chain | 3 | 99.933 % | one spec per rule file, deepest one that decides wins |
+| chain + prune | 2 | 99.955 % | chain, and a path inherits an ignored ancestor directory |
+
+All **33 repositories** fail the flat recipe. It is not a strawman I built to lose: it is what
+`from_lines` looks like it wants when you read the docstring, and the ninety seconds of "just put
+all the rules in one list" that precede noticing that a rule file has a *position*. What it costs
+is anchoring. `/dist` in `adev/shared-docs/pipeline/tutorials/common/.gitignore` means that
+directory's own `dist`; flattened, it means the repository root's.
+
+The 1,253 are not one bug counted 1,253 times, so `--breakdown` splits them:
+
+| | over-ignores | under-ignores |
+|---|---|---|
+| leaked into another branch | 1,072 | 11 |
+| no pattern matches at all | — | 138 |
+| wrong base, same subtree | 15 | 1 |
+| root file, order/precedence | — | 16 |
+| **total** | **1,087** (86.8 %) | **166** (13.2 %) |
+
+The direction matters more than the total. Over-ignoring is the failure that drops a file the
+repository deliberately kept — the `.devcontainer/base/devcontainer.json` failure, at scale — and
+it is 87 % of this. Under-ignoring is the mirror image of the same lost anchor: `/dist` no longer
+reaching `devtools/dist`, so nothing matches and the walker hands you a build directory.
+
+The three chain misses are worth naming individually, because three is small enough to attribute
+one by one instead of quoting a rate:
+
+* `nodejs/node`, the directory `node_modules/` — **the library**. `!**/node_modules/**` wins
+  (`check_file(...).index` says so, I didn't guess), and git does not consider `dir/**` to cover
+  `dir` itself. Same shape as the `.devcontainer` case above; it has a sane answer in
+  `match_tree_files`.
+* `ollama/ollama`, `app/ui/app/.vscode/extensions.json`, two variants — **the recipe**. The
+  deepest rule file re-includes it with `!.vscode/extensions.json`, but `app/.gitignore` already
+  excluded the `.vscode` *directory*, and git never walks in to read the negation. Adding pruning
+  fixes both, which is the whole argument for R2.
+
+And R2's misses are **not** a subset of R1's — I predicted they would be and was wrong. Pruning
+buys `ollama` and loses `supabase/supabase`'s `docker/volumes/functions/deno.jsonsample`, a file
+git tracks: `volumes/functions/**` doesn't match its own directory, `pathspec` says it does, and
+the prune then propagates the library's wrong answer to everything underneath. A prune amplifies
+whatever the matcher got wrong about directories. Zero of the four is my harness.
+
+**What this table is not.** It is a comparison of recipes *measured on `pathspec`*, not a claim
+about how often each one appears in the wild. I tried to measure that and couldn't: grep.app
+returns 429 on all three queries and GitHub's code search needs a token I don't have here, so the
+prevalence is unmeasured and I'm not going to estimate it. `files-to-prompt` is in this README as
+a consumer that loses the scope on its own — it doesn't use `pathspec` at all, it runs `fnmatch`
+over basenames — so the 28 % up there does not describe it, and it is not evidence about it.
+
 ### The third rule file: `.git/info/exclude`
 
 Git reads rules from three places, and the tree of `.gitignore` files is only two of them. The
