@@ -9,8 +9,9 @@ node-ignore 7.0.6                9852 checks     1 divergence
 ```
 
 Point it at the *tools* that walk a tree of `.gitignore` files instead, and the spread is wider —
-one flat list of rules versus one dict per directory, 48 wrong out of 179 versus 0 out of 433.
-That's [level 2](#level-2-the-tree-of-rule-files-which-is-nobodys-library), below.
+one flat list of rules versus one dict per directory, 48 wrong out of 179 versus 0 out of 433. The
+one project that promises the layer instead of improvising it gets 1 wrong out of 4,441. That's
+[level 2](#level-2-the-tree-of-rule-files-which-is-nobodys-library), below.
 
 This is a differential conformance bench. It carries a frozen corpus of 9,852 questions built from
 the root `.gitignore` of 43 real repositories — cpython, kubernetes, rust, next.js, pytorch — where
@@ -232,6 +233,67 @@ The black rows became two bug reports because they came with a path, a pattern a
 `files-to-prompt` row hasn't: it's a tool I use, the number is the point, and the maintainer can
 decide whether a flat list is a bug or a documented approximation. Ten minutes with `--level 2` on
 your own walker is cheaper than finding out from a user who shipped a file they meant to ignore.
+
+### The one project that promises the layer: `dvc`
+
+Everything above measures tools that improvise the tree layer because no library sells it. So the
+obvious question is whether it can be done right at all, and the answer needed a subject that
+*promises* it. [`iterative/dvc`](https://github.com/treeverse/dvc) does — `.dvcignore`, one per
+directory, documented as gitignore syntax — and unlike the three level-2 implementations I found by
+code search (1, 0 and 3 stars between them), it has 15,862 stars and users who would notice.
+
+| tool | version | answered | wrong overall |
+|---|---|---:|---:|
+| [`dvc`](https://github.com/treeverse/dvc) | 3.67.1 (PyPI), `pathspec` 1.1.1 | 4,441 of 4,463 | **1 / 4,441** |
+
+| class | queries | wrong |
+|---|---:|---:|
+| `own` | 898 | 1 |
+| `deeper` | 974 | 0 |
+| `from_root` | 885 | 0 |
+| `sibling` | 880 | 0 |
+| `root` | 804 | 0 |
+
+It runs on the same `pathspec` 1.1.1 as the three recipes above, which is what makes the comparison
+worth anything: the library is held still and only the caller's code changes. `dvc/ignore.py` keeps
+a `pygtrie` of directory → merged pattern list, rewrites a child file's patterns onto the parent's
+prefix, scans matches in reverse so the last one wins, and walks a path's ancestors so an excluded
+directory can't be re-included from below. That is the whole shape of the problem, written down by
+someone who had to ship it. 71.925 % for the flat recipe, 99.977 % for this.
+
+**The one divergence.** `supabase/supabase`'s `docker/.gitignore` — the same two lines that break
+recipe R2 above:
+
+```
+volumes/functions/**
+!volumes/functions/deno.json*
+```
+
+git re-includes `deno.jsonsample`; dvc does not. `DvcIgnorePatterns._ignore` walks the ancestor
+prefixes and breaks on the first match, and `_find_matching_pattern` probes a directory as
+`path + "/"` — so `volumes/functions/**`, which `pathspec` compiles to `^volumes/functions/`,
+claims the bare directory, the loop stops there and the negation is never reached. The probe can't
+just be dropped: a real `X/` pattern compiles to `^X(?P<ps_d>/)` and needs it. Reported as
+[treeverse/dvc#11095](https://github.com/treeverse/dvc/issues/11095) with a `dvc check-ignore`
+repro and two controls — plain negation still works, and without the `**` git refuses to re-include
+too, which is what pins the variable on `**` rather than on the `!`.
+
+**Two cases are declined, and the reason is mine.** `cpburnz/python-pathspec`'s tree has `.*`
+followed by `!.gitignore` at the root. My adapter writes the corpus's rule files out as
+`.dvcignore`, so after the rename `dev/.dvcignore` falls under `.*` with nothing re-including it —
+and dvc, unlike git, does not read a rule file that its ancestors ignore. `dev`'s two patterns
+silently never applied, and that was 8 of the 9 divergences I was one commit away from blaming on
+dvc. The adapter now *detects* it rather than guessing: every case is answered a second time with
+`!.dvcignore` appended at the root, and a case is declined only if its verdicts actually move. The
+probe tree is a detector; the reported answer always comes from the corpus's rules verbatim. Forced
+through with the re-include in place, dvc gets all 22 of those queries right.
+
+That difference is real on its own terms, and it is not the rename that causes it — with `.*` and
+no re-include at all, a pattern that covers `.gitignore` and `.dvcignore` equally, git applies the
+nested rule file and dvc skips it. I have not filed it, because `_update_trie` skips an ignored
+rule file in an explicit branch: that is a decision somebody made, not a slip, and a corpus cannot
+tell me their intent. It is worth knowing that one `.*` in a root `.dvcignore` silently disables
+every nested one.
 
 ### One repository where the pruning costs a real file
 
