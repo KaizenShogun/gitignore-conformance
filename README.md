@@ -295,6 +295,71 @@ rule file in an explicit branch: that is a decision somebody made, not a slip, a
 tell me their intent. It is worth knowing that one `.*` in a root `.dvcignore` silently disables
 every nested one.
 
+### The other project that promises the layer: `ripgrep` — which is also `fd`, and nearly `ruff`
+
+dvc was one subject. One subject can't tell you whether doing the tree layer right is normal or
+exceptional, so here is a second, found the same way — by looking for who *promises* the layer
+rather than for who writes it badly. (Code search on the query pattern was pure noise: 24 of 30
+hits were vendored `pathspec` inside a `venv`.) [`BurntSushi/ripgrep`](https://github.com/BurntSushi/ripgrep)
+promises it about as hard as anyone: nested `.gitignore` with correct scoping and precedence is a
+headline feature, not an incidental.
+
+You can't ask a walker "is this ignored?", so the adapter asks what it would walk, over two
+cross-checked channels — `--files` for the paths it would search, `--debug` for the `ignoring ./x:`
+lines, which cover directories that `--files` can never mention. When the channels disagree the
+adapter answers `null` and says so on stderr rather than picking the one it likes; that is what
+caught a `lstrip("./")` in my own code turning `.next` into `next`, in one run, before it could be
+scored as ripgrep's fault.
+
+| tool | version | answered | wrong overall |
+|---|---|---:|---:|
+| [`ripgrep`](https://github.com/BurntSushi/ripgrep) | 14.1.1 (musl release binary) | 4,463 of 4,463 | **5 / 4,463** |
+| [`fd`](https://github.com/sharkdp/fd) | 10.5.0 (musl release binary) | 4,463 of 4,463 | **5 / 4,463** |
+
+Two rows, one number, and that is the point of the second row. fd walks with the same `ignore`
+crate, so scoring it separately asks whether the divergences belong to the binary or to the
+component underneath. Compared as *sets* rather than counts — because 5 and 5 would look identical
+even if they were ten different bugs — the symmetric difference is empty in both directions: the
+same five paths, the same query class (`from_root`), the same guilty patterns. Every other class is
+0.0% for both. That's a component's signature, not two authors making similar mistakes.
+
+**All five are one mechanism.** They come from `psf/black`'s
+`tests/data/invalid_nested_gitignore_tests/a/.gitignore`, which holds a single `!`. git strips the
+`!`, finds nothing left to negate, and moves on. The `ignore` crate compiles it to the glob `**/`
+marked as a whitelist — which matches everything, so it re-includes the whole subtree, including
+paths an ancestor `.gitignore` excluded. `--debug` names it in one line:
+
+```
+Gitignore(Glob { from: Some("./a/.gitignore"), original: "!", actual: "**/", is_whitelist: true })
+```
+
+Filed as [BurntSushi/ripgrep#3527](https://github.com/BurntSushi/ripgrep/issues/3527). It is not the
+old "ripgrep rejects a pattern git accepts" complaint from #373/#646/#945: `**local.properties`, the
+exact example in those threads, behaves correctly in 14.1.1. This one isn't rejected, it's compiled
+into something that matches everything — and the control that *doesn't* diverge is what separates
+the two.
+
+**What it costs, and one caveat I only saw by measuring.** Root `.gitignore` with `.venv/` and
+`generated/`, 300 `.py` files in each, the same file's last line `!` versus `#c`:
+
+| | `rg --files` | `fd -tf` | `ruff check` | `git status -uall` |
+|---|---:|---:|---:|---:|
+| `!` | 600 | 600 | 300 diagnostics | 0 |
+| `#c` | 0 | 0 | 0 | 0 |
+
+ruff 0.16.6 is in that table because it walks with `ignore` too, and it lints 300 generated files
+its user told git to ignore. But with only `.venv/` in the tree ruff scored 0 in *both* rows — its
+own default `exclude` list covers `.venv`, `build`, `dist`, `node_modules`, so it never reaches the
+gitignore question at all. Smaller blast radius than fd, for a reason that has nothing to do with
+gitignore handling. Writing that down instead of the tidier "all three fail identically" is the
+difference between a measurement and a slogan.
+
+**And one correction to my own filing.** I first reported that the whitelist re-includes `.git/`,
+using a repro that puts `!` in `a/.gitignore`. A whitelist in `a/` can't reach `.git/`, which sits
+above it; what I'd seen was `--hidden` revealing a dotfile. With the `!` in the **root**
+`.gitignore` the claim holds and is worse than I said — plain `rg`, no flags, walks `.git/`
+(18 entries vs 0 in the control). Right conclusion, wrong repro, corrected in the thread.
+
 ### One repository where the pruning costs a real file
 
 Everything above is my corpus: I chose the queries, even if git wrote the answers. So here is the
