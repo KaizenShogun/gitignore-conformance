@@ -425,6 +425,66 @@ and its 0 above covers this corpus too, which neither its description nor its te
 `iterator.c`, so `git_status` and the workdir iterator are outside these numbers, and I said so in
 the thread rather than letting a clean table imply more than it earned.
 
+### The other subject that promises to *be* git: `dulwich`
+
+libgit2 is git rewritten in C. `dulwich` is git rewritten in Python, and its
+`IgnoreFilterManager` promises the level-2 layer outright: a `.gitignore` per directory loaded on
+demand, `.git/info/exclude` and the user's global excludes stacked underneath, one
+`is_ignored(path)` for the whole repository. It is also the cleanest subject here for two reasons
+that cost earlier sessions real time — the rule files keep the name `.gitignore` (dvc renames
+them, and a renaming transport quietly changes the question), and directory-ness is in the API,
+documented with the same trailing slash `git check-ignore` uses.
+
+Same corpus, same oracle. Two builds of the same code plus one deliberately patched:
+
+| subject | divergences (4,463 queries) |
+|---|---:|
+| 1.2.14 (PyPI wheel) | **28** |
+| tip of `main`, `2d728c2a` | **28** |
+| the same, with `find_matching`'s filter loop reversed | 9 |
+
+The first two rows are the same 28 cases, not just the same count — `dulwich/ignore.py` is
+byte-identical in the wheel and on `main`, so nothing merged since the release touches this.
+`porcelain.check_ignore` — what `dulwich check-ignore` runs — gives the same 28 as the API, which
+is what makes it a user-visible number rather than an internal-API detail.
+
+**22 of the 28 are one mechanism: between two rule files, the shallower one decides.** git gives
+the deeper `.gitignore` precedence; `find_matching` accumulates its filters with
+`filters.insert(0, …)`, walks them deepest-first, and `is_ignored` takes the last match — which
+therefore comes from the file closest to the root. Reduced from `nodejs/node`, with git re-asked at
+every reduction step:
+
+```
+.gitignore                                        !deps/v8/**
+deps/v8/third_party/ittapi/ittapi-rs/.gitignore   Cargo.lock
+```
+
+git ignores `…/ittapi-rs/Cargo.lock`; dulwich does not. Put those exact two lines in one file and
+dulwich is right, which is the paired control: ordering *within* a file is correct, ordering
+*between* files is reversed. It goes both ways — cpython's root `.idea/` against a nested `!.idea/`
+comes back ignored where git re-includes it.
+
+The third row is an instrument, not a proposal. Reversing that one loop fixes 22, leaves 6 and
+**breaks 3**, so it is not a fix; it is what attributes the 22 to that line rather than to my
+harness. Its 48-test suite passes identically with and without the change, so nothing in the suite
+pins the current order either way — and `test_nested_gitignores` covers this exact shape and passes
+only because its root negation matches a directory instead of the queried file.
+
+**The 3 it breaks are a second defect the current order was masking:** a bare `!` line. `psf/black`
+ships one, in `tests/data/invalid_nested_gitignore_tests/a/.gitignore`, whose only content is `!`.
+With `build/` and `!` in a single file, dulwich stops ignoring `build/`; swap the `!` for `#c`,
+another line git makes no pattern of, and it agrees again. Same corner the Rust `ignore` crate gets
+wrong in its own way ([ripgrep#3527](https://github.com/BurntSushi/ripgrep/issues/3527)).
+
+**The remaining 6 are a third one**, surviving the reordering and reproducing in a single file:
+`ollama/ollama`'s root `.vscode` against a nested `!.vscode/extensions.json`. git keeps it ignored
+— a file cannot be re-included while a parent directory stays excluded — and dulwich re-includes
+it. That is a `_check_parent_exclusion` gap, in the neighbourhood of dulwich's own #2141 but
+outside what the test that landed with it covers.
+
+**What this does not measure.** Only `is_ignored` and `porcelain.check_ignore`: not `status`, not
+`add`, not the index-aware paths, not `ignorecase`, nothing Windows-specific.
+
 ### One repository where the pruning costs a real file
 
 Everything above is my corpus: I chose the queries, even if git wrote the answers. So here is the
