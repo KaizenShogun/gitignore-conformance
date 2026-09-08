@@ -360,6 +360,71 @@ above it; what I'd seen was `--hidden` revealing a dotfile. With the `!` in the 
 `.gitignore` the claim holds and is worse than I said — plain `rg`, no flags, walks `.git/`
 (18 entries vs 0 in the control). Right conclusion, wrong repro, corrected in the thread.
 
+### The subject that promises to *be* git: `libgit2`
+
+dvc promises the layer. The `ignore` crate promises it. libgit2 doesn't promise to support
+gitignore — it promises to be git, and `git_ignore_path_is_ignored()` is the same question
+`git check-ignore` answers with the same documented contract, written again in C by other people.
+It is also the load-bearing kind of infrastructure: pygit2, git2-rs, nodegit and a long tail of
+things that speak git without shelling out to git all get their answer from that function.
+
+`adapters/libgit2_adapter.py` is the shortest adapter here, and that's the finding in miniature.
+There is no eight-line walk to write, no precedence to reimplement, no directory heuristic to
+guess: the subject exposes the question directly, so the adapter only builds the tree and asks.
+The C side is `adapters/lgignore.c`, sixty lines, with the cmake and `cc` invocations in its header.
+
+Three static builds of the **same** source commit — `0551dfd4`, same flags, same machine, only the
+patch differing — because at the time of measuring there were two open pull requests aimed at this
+exact machinery:
+
+| build | corpus (4,463 queries) | `.git/info/exclude` corpus (99 queries) |
+|---|---:|---:|
+| `main` @ `0551dfd4` | **6** | **33** |
+| `main` + [#7339](https://github.com/libgit2/libgit2/pull/7339) | **0** | **0** |
+| `main` + [#7369](https://github.com/libgit2/libgit2/pull/7369) | 5 | 33 |
+
+The 0 in that table is worth more to me than the 6. It is the same harness, the same adapter, the
+same oracle and the same corpus in all three rows, so a build that scores zero is the control that
+says the bench isn't manufacturing divergences — the thing I could never prove with a subject that
+only ever fails.
+
+**The hole had an owner, and reading the tracker first is what found it.** Both of `main`'s
+families were already filed, in June, by the same person, with zero comments on either:
+[#7284](https://github.com/libgit2/libgit2/issues/7284) (a nested `!vendor` failing to re-include
+what the root's `**/vendor/` excluded) and
+[#7283](https://github.com/libgit2/libgit2/issues/7283) (`!d/sub/*` wrongly re-including under an
+excluded `d/`). Eleven searches of that tracker cost half a minute; opening a third issue would
+have cost the maintainers' patience.
+
+So the useful work wasn't an issue, it was arbitration. #7339 fixes all six and both issues' verbatim
+repros, with nothing new. #7369 fixes #7283's two, leaves #7284's four, and **breaks one case `main`
+gets right** — which reduces to the same four rule lines split across two files:
+
+```
+.gitignore      x/
+t/.gitignore    !x/
+                /x/*
+                !/x/keep
+```
+
+git does not ignore `t/x/keep/f.txt`; `main` agrees; with #7369 it comes back ignored. Put the
+identical four lines in *one* file and every build is correct. That patch makes a negative match
+non-conclusive so the walk continues upward — and upward it finds the root's `x/`, which the deeper
+`!x/` had already outranked. Its own new test keeps both lines in one file, which is exactly why the
+suite stays green. Both measurements are in the PR threads.
+
+**The `.git/info/exclude` column is a second finding and it reduces to five lines.** `.gitignore`
+holding `!a`, `.git/info/exclude` holding `a` — git does not ignore `a`, because `.gitignore`
+outranks `info/exclude` and the `!` in the higher-precedence source wins. `main` says ignored. Swap
+the sources (`.gitignore: c`, `exclude: !c`) and `main` is right, so it is not an inverted stacking
+order; put both lines in one file and it is right there too. The negation was never allowed to leave
+its own source. #7339's title — *honor nested negation across rule sources* — names it precisely,
+and its 0 above covers this corpus too, which neither its description nor its tests claim.
+
+**What this does not measure.** Only `git_ignore_path_is_ignored()`. #7339 also touches
+`iterator.c`, so `git_status` and the workdir iterator are outside these numbers, and I said so in
+the thread rather than letting a clean table imply more than it earned.
+
 ### One repository where the pruning costs a real file
 
 Everything above is my corpus: I chose the queries, even if git wrote the answers. So here is the
