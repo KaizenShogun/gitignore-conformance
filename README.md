@@ -505,6 +505,15 @@ the two columns is one import path, v5 → v6:
 | `.git/info/exclude` corpus (99) | **0** | **0** |
 | `Worktree.Status()` (2,224 file queries) | **1** | **1** — *a different one* |
 
+Two open pull requests were measured the same way, by their `merge` ref (what GitHub computes as
+main + PR), so the column isolates the patch: [#2318](https://github.com/go-git/go-git/pull/2318)
+leaves all 4,463 answers untouched and fixes both of its own repros, which is an endorsement of
+safety rather than of impact; [#2311](https://github.com/go-git/go-git/pull/2311) fixes #2112 and
+takes `main` from 2 to **4**, because it re-includes descendants of a directory that `!dir/` puts
+back. The `Status()` divergence is filed as [#2369](https://github.com/go-git/go-git/issues/2369),
+bisected to `70ab8844` — a commit that fixed the mirror-image case, so it traded one broken family
+for another rather than causing a plain regression.
+
 Four divergences in 4,463 is the closest any unpatched subject in this bench has come to git, and
 the `exclude` column is a clean zero where libgit2's `main` gets 33 wrong. The interesting part is
 not the totals, though. It is that on `main` the two entry points **disagree with each other, in
@@ -551,6 +560,36 @@ teaches `Status()` about excluded parents is what stops a legitimate re-include 
 commits and no index: not `Add`, not the sparse-checkout paths, not `ignorecase`. Directory
 queries are declined under `Status()`, not guessed — `Status` reports files, and inventing a row
 for a directory would be my rule, not go-git's.
+
+#### Should go-git keep its matcher or delegate to a library?
+
+That question has been open in #877 since March, and it is the one case here where the bench gets to
+answer a design decision instead of filing a bug. A contributor had already written both halves as
+two consecutive commits on a fork, which is the lucky part: `6aa9efc` is go-git with its own engine,
+`3edf6ec` is the same tree delegating to `git-pkgs/gitignore` v1.1.1. Taking the parent as the
+control isolates the engine swap instead of five months of drift.
+
+| build | `Matcher.Match` | `Status()` |
+|---|---:|---:|
+| `main` (2026-09-09) | 2 | 1 |
+| `6aa9efc` — own matcher | 4 | 1 |
+| `3edf6ec` — delegating, v1.1.1 | **5** | **4** |
+| the same, both library bugs patched | **2** | **1** |
+
+Delegating as it stands trades two failures for three, and the three are one library bug
+([git-pkgs/gitignore#22](https://github.com/git-pkgs/gitignore/pull/22)) that also accounts for the
+whole `Status()` column. Patch that and a second one found on the way
+([#23](https://github.com/git-pkgs/gitignore/issues/23): a dir-only pattern with a wildcard,
+`*.egg-info/`, matches the directory but nothing inside it) and delegating lands exactly where
+`main` already is. The engine choice turns out to be orthogonal to the bug in the issue where it is
+being discussed: the opening repro of #877 passes on all four builds, and the sibling shape from
+#694 — `test/` and `!test/keep` in one file — fails on all four.
+
+**#23 is also a hole in this corpus, and it is worth saying out loud.** The bench never asks about a
+file *inside* a directory matched by a wildcard dir-only pattern, so all 4,463 queries stayed green
+through a bug that hits 9 real rule lines across 8 of the 33 repos — `*.egg-info/` alone appears in
+airflow, transformers, langchain, vscode, flask and pytorch. A corpus built from real rule files
+still only asks the questions someone thought to ask.
 
 ### One repository where the pruning costs a real file
 
