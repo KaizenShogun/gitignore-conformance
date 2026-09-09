@@ -485,6 +485,73 @@ outside what the test that landed with it covers.
 **What this does not measure.** Only `is_ignored` and `porcelain.check_ignore`: not `status`, not
 `add`, not the index-aware paths, not `ignorecase`, nothing Windows-specific.
 
+### The third one: `go-git`, where the released code and `main` are two different subjects
+
+go-git is git rewritten in Go, and the one whose answer travels furthest: Gitea, ArgoCD and Flux
+all reach through it. It promises the level-2 layer the same way — `gitignore.ReadPatterns(fs,
+path)` reads `.git/info/exclude` and then walks the tree for `.gitignore` files, and
+`NewMatcher(ps).Match(path, isDir)` answers for any path.
+
+Two things make it worth measuring twice. The released `v5.19.2` and the `main` branch
+(`v6.0.0-alpha.5`, commit `c3e96df0`, taken 2026-09-08) are **not the same code**: `main` carries
+a port of git's own `wildmatch.c` and a `Scope` type the release has never seen. And go-git has two entry
+points that a user can hold — the matcher, and `Worktree.Status()`, which is what the downstream
+tools actually call. Same corpus, same oracle, same adapter; the only thing that changes between
+the two columns is one import path, v5 → v6:
+
+| entry point | v5.19.2 | `main` (v6 alpha) |
+|---|---:|---:|
+| `ReadPatterns` + `Matcher.Match` (4,463 queries) | **4** | **2** |
+| `.git/info/exclude` corpus (99) | **0** | **0** |
+| `Worktree.Status()` (2,224 file queries) | **1** | **1** — *a different one* |
+
+Four divergences in 4,463 is the closest any unpatched subject in this bench has come to git, and
+the `exclude` column is a clean zero where libgit2's `main` gets 33 wrong. The interesting part is
+not the totals, though. It is that on `main` the two entry points **disagree with each other, in
+opposite directions**, so which answer you get depends on which door you came through.
+
+**`main` fixes the `**` the release gets wrong.** `grafana/grafana` ignores `testdata/**output/`,
+where the `**` is glued to text inside a component — git treats consecutive asterisks there as an
+ordinary `*`. v5.19.2 does not ignore `testdata/xoutput/`; `main` does. Paired controls, git
+re-asked at each step: `testdata/*output/` is right on both, and so is `testdata/**/output/`, so
+it is the glued `**` and not the trailing slash. That is the `wildmatch` port earning its keep.
+
+**Both matchers still re-include a file underneath an excluded directory.** From `ollama/ollama`:
+
+```
+.vscode
+!.vscode/extensions.json
+```
+
+git keeps `.vscode/extensions.json` ignored — once a directory is excluded, git does not look
+inside it again, so nothing in there can be re-included. Both matchers say it is not ignored. The
+paired control is the same tree with `.vscode/*` instead of `.vscode`, which is the form git
+*does* let you re-include through: there, everything agrees. This one has been reported twice, in
+[#694](https://github.com/go-git/go-git/issues/694) (2023, `foo/` + `!foo/bar`) and
+[#877](https://github.com/go-git/go-git/issues/877) (2023, a nested `!def` under a root `abc`).
+Both were closed by the stale bot rather than by a fix, and both still reproduce on yesterday's
+`main`.
+
+**And `Status()` on `main` has a divergence of its own that the matcher does not.** From
+`supabase/supabase`'s `docker/.gitignore`:
+
+```
+volumes/functions/**
+!volumes/functions/deno.json*
+```
+
+git does not ignore `docker/volumes/functions/deno.jsonsample` — `volumes/functions/**` never
+excluded the directory itself, so the negation is allowed to work. `main`'s `Status()` reports it
+as ignored anyway. v5's `Status()` gets it right, and so does `main`'s own matcher, which is what
+makes it a regression in the newer walk rather than an old bug: delete the `!` line and every
+column agrees again. It is the mirror image of the `.vscode` case — the same new machinery that
+teaches `Status()` about excluded parents is what stops a legitimate re-include from working.
+
+**What this does not measure.** Only the matcher and `Worktree.Status()` on a worktree with no
+commits and no index: not `Add`, not the sparse-checkout paths, not `ignorecase`. Directory
+queries are declined under `Status()`, not guessed — `Status` reports files, and inventing a row
+for a directory would be my rule, not go-git's.
+
 ### One repository where the pruning costs a real file
 
 Everything above is my corpus: I chose the queries, even if git wrote the answers. So here is the
