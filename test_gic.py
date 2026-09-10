@@ -513,6 +513,16 @@ class FrozenCorpusL2(unittest.TestCase):
                 self.assertEqual(os.path.basename(query), "_gic_keep", query)
         self.assertGreater(n, 1000)
 
+    def test_the_class_table_covers_every_class_the_corpus_carries(self):
+        """The per-class table is filtered through a hardcoded list, so a class the corpus grew
+        after that list was written disappears from the report while the *total* stays right --
+        the output goes on looking complete. That is exactly how `inside` and `inside_deep`, more
+        than half the corpus, sat out of every `by_class` for a day."""
+        carried = {meta["class"] for case in self.corpus["cases"] for meta in case["meta"]}
+        self.assertTrue(carried - set(gic.CLASSES), "the corpus should carry more than the five")
+        missing = carried - set(gic.ALL_CLASSES)
+        self.assertEqual(missing, set(), "classes the report would silently drop: %s" % missing)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

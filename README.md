@@ -10,7 +10,9 @@ node-ignore 7.0.6                9852 checks     1 divergence
 
 Point it at the *tools* that walk a tree of `.gitignore` files instead, and the spread is wider —
 one flat list of rules versus one dict per directory, 48 wrong out of 179 versus 0 out of 433. The
-one project that promises the layer instead of improvising it gets 1 wrong out of 4,441. That's
+one project that promises the layer instead of improvising it gets 13 wrong out of 8,909 — and
+twelve of those thirteen only became askable on 10 Sep 2026, when the corpus learned to ask about
+a file *inside* a directory. That's
 [level 2](#level-2-the-tree-of-rule-files-which-is-nobodys-library), below.
 
 This is a differential conformance bench. It carries a frozen corpus of 9,852 questions built from
@@ -135,17 +137,62 @@ about the **directories** on the way to them (2,239), and about files **inside**
 
 The three are not decoration. A walker prunes directories; a rule that wrongly kills `docs/` never
 gets the chance to be wrong about `docs/api.md`, so a file-only bench measures the survivors of the
-mistake and not the mistake. Seven of the nine divergences below are directory queries.
+mistake and not the mistake. Of black's twenty-three divergences below, two are file queries: seven
+are directories and fourteen are files underneath one.
 
 And the third variant is here because the first two weren't enough, which is worth more than a
 clean story. `inside` asks about `D/name/_gic_keep` and `D/name/_gic_deep/_gic_keep`: leaf names
 that cannot match any pattern, so the verdict is inherited from the ancestor and from nothing else.
 It was added on 10 Sep 2026 after `git-pkgs/gitignore` matched `mypkg.egg-info/` and not
-`mypkg.egg-info/PKG-INFO` while all 4,463 questions stayed green. **Every number below with a
-denominator of 4,463 predates it** — those measurements are still true of the questions they asked,
-and the subject-by-subject columns have not been re-run on the full 8,953 yet. The one subject that
-has been: `git-pkgs/gitignore` went from 2 divergences to 24 when the variant landed, of which 12
-are the `*.egg-info/` bug and 12 are two further ones ([#25](https://github.com/git-pkgs/gitignore/issues/25),
+`mypkg.egg-info/PKG-INFO` while all 4,463 questions stayed green.
+
+#### What the third variant cost every subject
+
+Every column was then re-run — same binaries, same trees, same day, only the questions changed.
+That is the whole reason the variant was *added* rather than the existing two being edited: it
+makes the two runs a paired contrast instead of two different benches.
+
+| subject | 4,463 questions | 8,953 questions | ×· |
+|---|---:|---:|---:|
+| `pathspec` 1.1.1, flat recipe (R0) | 1,253 | 2,547 | 2.0 |
+| `pathspec` 1.1.1, chain (R1) | 3 | 7 | 2.3 |
+| `pathspec` 1.1.1, chain + prune (R2) | 2 | 4 | 2.0 |
+| `files-to-prompt` (file queries only) | 257 / 2,224 | 825 / 6,714 | 3.2 |
+| `black` 26.5.1 | 9 / 4,373 | 23 / 8,773 | 2.6 |
+| `dvc` 3.67.1 | 1 / 4,441 | **13 / 8,909** | 13.0 |
+| `ripgrep` 14.1.1 | 5 | 11 | 2.2 |
+| `fd` 10.5.0 | 5 | 11 | 2.2 |
+| `libgit2` `main` | 6 | **40** | 6.7 |
+| `libgit2` + [#7339](https://github.com/libgit2/libgit2/pull/7339) | 0 | **0** | — |
+| `libgit2` + [#7369](https://github.com/libgit2/libgit2/pull/7369) | 5 | 15 | 3.0 |
+| `go-git` v5.19.2, matcher | 4 | 18 | 4.5 |
+| `go-git` `main`, matcher | 2 | 12 | 6.0 |
+| `go-git` v5.19.2, `Status()` | 1 / 2,224 | 15 / 6,714 | 15.0 |
+| `go-git` `main`, `Status()` | 1 / 2,224 | 5 / 6,714 | 5.0 |
+| `git-pkgs/gitignore` v1.1.1 | 5 | **27** | 5.4 |
+| `dulwich` 1.2.14 | 28 | 68 | 2.4 |
+| `dulwich` `main` | 28 | 68 | 2.4 |
+
+Read the last column, not the middle one. The multiplier is not a property of the corpus — the
+corpus just about doubles, 4,463 → 8,953 — it is a property of the subject: how much of its damage happens where
+nobody was looking. `ripgrep` doubles, which is what a subject whose remaining bugs are all in the
+matcher does. `libgit2`'s `main` sextuples and `dvc` goes up thirteenfold, which is what a subject
+whose bugs are in the *inheritance* does. Those are different bugs and the old denominator could
+not tell them apart.
+
+Two controls, because a table like this is worth exactly what its controls are worth:
+
+* **No old divergence disappeared.** Across all fifteen adapter columns, 0 of the 4,463-era divergences
+  are missing from the 8,953 run — every one is still there, at the same path, with the same
+  verdict. The corpus is a superset for each subject and not merely on paper.
+* **`libgit2` + #7339 stays at 0.** A column that was already zero cannot go up by construction,
+  so it is the row that says the harness did not simply learn to invent divergences. It answered
+  4,490 new questions and got all of them right.
+
+Everything in the new half is an `inside` query; nothing else moved. `git-pkgs/gitignore` went
+from 2 divergences to 24 on the branch that had just merged my [#22](https://github.com/git-pkgs/gitignore/pull/22),
+of which 12 are the `*.egg-info/` bug and 12 are two further ones
+([#25](https://github.com/git-pkgs/gitignore/issues/25),
 [#26](https://github.com/git-pkgs/gitignore/issues/26)) that no earlier query could see.
 
 ```sh
@@ -177,14 +224,14 @@ scratch deeper down splits them — which is the only reason both are asked.
 
 | tool | version | answered | `sibling` wrong | wrong overall |
 |---|---|---:|---:|---:|
-| [`simonw/files-to-prompt`](https://github.com/simonw/files-to-prompt) | `main`, fetched 29 Aug 2026 | 2,224 of 4,463 | **48 / 179** paired | 257 / 2,224 |
-| [`psf/black`](https://github.com/psf/black) | 26.5.1 (PyPI wheel) | 4,373 of 4,463 | 0 / 870 | 9 / 4,373 |
+| [`simonw/files-to-prompt`](https://github.com/simonw/files-to-prompt) | `main`, fetched 29 Aug 2026 | 6,714 of 8,953 | **48 / 179** paired | 825 / 6,714 |
+| [`psf/black`](https://github.com/psf/black) | 26.5.1 (PyPI wheel) | 8,773 of 8,953 | 0 / 870 | 23 / 8,773 |
 
 Neither denominator is the corpus, and they are not each other's. `files-to-prompt` prints a list of
 files, so it cannot answer a question about a directory: it declines all 33 directory cases in one
-block, which is a legitimate answer and never a denominator. `black` answers both halves and
-declines one repository — its own, on both variants, because a `.gitignore` shipped in its test data
-crashes the walk (below).
+block, which is a legitimate answer and never a denominator — it does answer the `inside` half,
+which is files. `black` answers all three variants and declines one repository — its own, on each of
+them, because a `.gitignore` shipped in its test data crashes the walk (below).
 
 Where they overlap, the difference is a data structure. `files-to-prompt` keeps `gitignore_rules` as
 a single flat list and does `gitignore_rules.extend(...)` on entering each directory, never trimming
@@ -194,16 +241,24 @@ on the way out (`cli.py:122-128`). So a rule written in `a/.gitignore` stays liv
 **The residue is the structure, not the author** — that's the only reading of these two rows I'll
 defend.
 
-black's nine, by class and by half:
+black's twenty-three, by class and by variant:
 
-| class | file queries | directory queries | total |
-|---|---:|---:|---:|
-| `own` | 2 / 444 | 3 / 444 | 5 / 888 |
-| `deeper` | 0 / 481 | 3 / 483 | 3 / 964 |
-| `root` | 0 / 394 | 1 / 402 | 1 / 796 |
-| `sibling` | 0 / 433 | 0 / 437 | 0 / 870 |
-| `from_root` | 0 / 427 | 0 / 428 | 0 / 855 |
-| **all** | **2 / 2,179** | **7 / 2,194** | **9 / 4,373** |
+| class | file queries | directory queries | inside | total |
+|---|---:|---:|---:|---:|
+| `own` | 2 / 444 | 3 / 444 | — | 5 / 888 |
+| `deeper` | 0 / 481 | 3 / 483 | — | 3 / 964 |
+| `root` | 0 / 394 | 1 / 402 | — | 1 / 796 |
+| `sibling` | 0 / 433 | 0 / 437 | — | 0 / 870 |
+| `from_root` | 0 / 427 | 0 / 428 | — | 0 / 855 |
+| `inside` | — | — | 7 / 2,200 | 7 / 2,200 |
+| `inside_deep` | — | — | 7 / 2,200 | 7 / 2,200 |
+| **all** | **2 / 2,179** | **7 / 2,194** | **14 / 4,400** | **23 / 8,773** |
+
+Seven ancestors, each asked at both depths. Twelve of the fourteen are black **over**-ignoring —
+`python/cpython` (8, all under `Platforms/Android/testbed/.idea`), `facebook/react` (2, a
+`.vscode`), `microsoft/vscode` (2, a `node_modules` under test fixtures). Over-pruning is the
+direction that matters for a formatter: it silently skips files the user asked it to format, and
+nothing says so. The other two, in `nodejs/node`, go the other way.
 
 Read the numbers carefully, because the raw ones lie in both directions:
 
@@ -240,11 +295,14 @@ Read the numbers carefully, because the raw ones lie in both directions:
   ignores, black doesn't. `pathspec`'s `SimpleGiBackend.match_file` answers differently forward and
   in reverse, and the reverse — the direction black uses — is the one that diverges from git. Filed
   upstream as [cpburnz/python-pathspec#134](https://github.com/cpburnz/python-pathspec/issues/134).
-  So the nine are fully attributed: 8 to the caller, 1 to the library, 0 to my harness.
+  So the original nine are fully attributed: 8 to the caller, 1 to the library, 0 to my harness.
+  The fourteen `inside` ones added on 10 Sep 2026 are measured but **not yet attributed** — the
+  short-circuit above is the obvious candidate and the two `nodejs/node` rows point the other way,
+  which is exactly the kind of guess this file exists to avoid making.
 * **One crash, not swallowed.** A `.gitignore` whose only line is `!` — git accepts it; it ships in
   black's own test data — makes `get_gitignore` raise `GitIgnorePatternError` and abort the entire
   walk. The adapter declines that repository out loud on stderr rather than reporting "not ignored",
-  which is why black answers 64 of the 66 cases and 4,373 of the 4,463 questions. A declined
+  which is why black answers 96 of the 99 cases and 8,773 of the 8,953 questions. A declined
   repository is never a denominator.
 
 The black rows became two bug reports because they came with a path, a pattern and a repro. The
@@ -262,7 +320,7 @@ code search (1, 0 and 3 stars between them), it has 15,862 stars and users who w
 
 | tool | version | answered | wrong overall |
 |---|---|---:|---:|
-| [`dvc`](https://github.com/treeverse/dvc) | 3.67.1 (PyPI), `pathspec` 1.1.1 | 4,441 of 4,463 | **1 / 4,441** |
+| [`dvc`](https://github.com/treeverse/dvc) | 3.67.1 (PyPI), `pathspec` 1.1.1 | 8,909 of 8,953 | **13 / 8,909** |
 
 | class | queries | wrong |
 |---|---:|---:|
@@ -271,16 +329,25 @@ code search (1, 0 and 3 stars between them), it has 15,862 stars and users who w
 | `from_root` | 885 | 0 |
 | `sibling` | 880 | 0 |
 | `root` | 804 | 0 |
+| `inside` | 2,234 | 6 |
+| `inside_deep` | 2,234 | 6 |
 
 It runs on the same `pathspec` 1.1.1 as the three recipes above, which is what makes the comparison
 worth anything: the library is held still and only the caller's code changes. `dvc/ignore.py` keeps
 a `pygtrie` of directory → merged pattern list, rewrites a child file's patterns onto the parent's
 prefix, scans matches in reverse so the last one wins, and walks a path's ancestors so an excluded
 directory can't be re-included from below. That is the whole shape of the problem, written down by
-someone who had to ship it. 71.925 % for the flat recipe, 99.977 % for this.
+someone who had to ship it. 71.551 % for the flat recipe, 99.854 % for this.
 
-**The one divergence.** `supabase/supabase`'s `docker/.gitignore` — the same two lines that break
-recipe R2 above:
+dvc is the subject the third variant hurt most in relative terms — 1 → 13, and the twelve new ones
+are six ancestors asked at two depths. Four are `python/cpython` directories named `core` that dvc
+prunes and git keeps; two are `supabase/supabase`'s `apps/docs/sample/generated/.gitkeep`, which
+dvc descends into and git does not. That is the whole argument for the variant in one row: a
+project whose *entire subject* is inheriting a directory verdict downwards looked like `1 / 4,441`
+for as long as nobody asked it about a file underneath.
+
+**The `own` divergence, and the one the other twelve come back to.** `supabase/supabase`'s
+`docker/.gitignore` — the same two lines that break recipe R2 above:
 
 ```
 volumes/functions/**
@@ -296,7 +363,7 @@ just be dropped: a real `X/` pattern compiles to `^X(?P<ps_d>/)` and needs it. R
 repro and two controls — plain negation still works, and without the `**` git refuses to re-include
 too, which is what pins the variable on `**` rather than on the `!`.
 
-**Two cases are declined, and the reason is mine.** `cpburnz/python-pathspec`'s tree has `.*`
+**Three cases are declined — one per variant — and the reason is mine.** `cpburnz/python-pathspec`'s tree has `.*`
 followed by `!.gitignore` at the root. My adapter writes the corpus's rule files out as
 `.dvcignore`, so after the rename `dev/.dvcignore` falls under `.*` with nothing re-including it —
 and dvc, unlike git, does not read a rule file that its ancestors ignore. `dev`'s two patterns
@@ -304,7 +371,7 @@ silently never applied, and that was 8 of the 9 divergences I was one commit awa
 dvc. The adapter now *detects* it rather than guessing: every case is answered a second time with
 `!.dvcignore` appended at the root, and a case is declined only if its verdicts actually move. The
 probe tree is a detector; the reported answer always comes from the corpus's rules verbatim. Forced
-through with the re-include in place, dvc gets all 22 of those queries right.
+through with the re-include in place, dvc gets all 44 of those queries right.
 
 That difference is real on its own terms, and it is not the rename that causes it — with `.*` and
 no re-include at all, a pattern that covers `.gitignore` and `.dvcignore` equally, git applies the
@@ -331,17 +398,22 @@ scored as ripgrep's fault.
 
 | tool | version | answered | wrong overall |
 |---|---|---:|---:|
-| [`ripgrep`](https://github.com/BurntSushi/ripgrep) | 14.1.1 (musl release binary) | 4,463 of 4,463 | **5 / 4,463** |
-| [`fd`](https://github.com/sharkdp/fd) | 10.5.0 (musl release binary) | 4,463 of 4,463 | **5 / 4,463** |
+| [`ripgrep`](https://github.com/BurntSushi/ripgrep) | 14.1.1 (musl release binary) | 8,953 of 8,953 | **11 / 8,953** |
+| [`fd`](https://github.com/sharkdp/fd) | 10.5.0 (musl release binary) | 8,953 of 8,953 | **11 / 8,953** |
 
 Two rows, one number, and that is the point of the second row. fd walks with the same `ignore`
 crate, so scoring it separately asks whether the divergences belong to the binary or to the
-component underneath. Compared as *sets* rather than counts — because 5 and 5 would look identical
-even if they were ten different bugs — the symmetric difference is empty in both directions: the
-same five paths, the same query class (`from_root`), the same guilty patterns. Every other class is
-0.0% for both. That's a component's signature, not two authors making similar mistakes.
+component underneath. Compared as *sets* rather than counts — because 11 and 11 would look identical
+even if they were twenty-two different bugs — the symmetric difference is empty in both directions:
+the same eleven paths, the same guilty patterns. That's a component's signature, not two authors
+making similar mistakes.
 
-**All five are one mechanism.** They come from `psf/black`'s
+These two are the flattest multiplier in the bench, 5 → 11, and the flatness is the finding: the
+six new ones come out of the same rule file as the original five and are the same bare-`!` bug seen
+from inside, not a second, inheritance-shaped problem. The `inside` half is 3 / 2,245 for both — the
+lowest of any subject measured here.
+
+**All eleven are one mechanism.** They come from `psf/black`'s
 `tests/data/invalid_nested_gitignore_tests/a/.gitignore`, which holds a single `!`. git strips the
 `!`, finds nothing left to negate, and moves on. The `ignore` crate compiles it to the glob `**/`
 marked as a whitelist — which matches everything, so it re-includes the whole subtree, including
@@ -395,16 +467,22 @@ Three static builds of the **same** source commit — `0551dfd4`, same flags, sa
 patch differing — because at the time of measuring there were two open pull requests aimed at this
 exact machinery:
 
-| build | corpus (4,463 queries) | `.git/info/exclude` corpus (99 queries) |
-|---|---:|---:|
-| `main` @ `0551dfd4` | **6** | **33** |
-| `main` + [#7339](https://github.com/libgit2/libgit2/pull/7339) | **0** | **0** |
-| `main` + [#7369](https://github.com/libgit2/libgit2/pull/7369) | 5 | 33 |
+| build | corpus (8,953 queries) | was, at 4,463 | `.git/info/exclude` corpus (99 queries) |
+|---|---:|---:|---:|
+| `main` @ `0551dfd4` | **40** | 6 | **33** |
+| `main` + [#7339](https://github.com/libgit2/libgit2/pull/7339) | **0** | 0 | **0** |
+| `main` + [#7369](https://github.com/libgit2/libgit2/pull/7369) | 15 | 5 | 33 |
 
-The 0 in that table is worth more to me than the 6. It is the same harness, the same adapter, the
+The 0 in that table is worth more to me than the 40. It is the same harness, the same adapter, the
 same oracle and the same corpus in all three rows, so a build that scores zero is the control that
 says the bench isn't manufacturing divergences — the thing I could never prove with a subject that
-only ever fails.
+only ever fails. It has now held twice: zero on 4,463 questions, and still zero when the corpus
+grew by 4,490 questions of a shape it had never been asked, on the same binary.
+
+`main` went 6 → 40, the second-steepest multiplier here, which says its remaining bugs are almost
+entirely about what a subtree inherits: 34 of the 40 are `inside` queries, 26 of those 34 in the
+under-ignoring direction — libgit2 descending into a directory git prunes. `nodejs/node` alone
+accounts for 24 of them.
 
 **The hole had an owner, and reading the tracker first is what found it.** Both of `main`'s
 families were already filed, in June, by the same person, with zero comments on either:
@@ -414,9 +492,10 @@ what the root's `**/vendor/` excluded) and
 excluded `d/`). Eleven searches of that tracker cost half a minute; opening a third issue would
 have cost the maintainers' patience.
 
-So the useful work wasn't an issue, it was arbitration. #7339 fixes all six and both issues' verbatim
-repros, with nothing new. #7369 fixes #7283's two, leaves #7284's four, and **breaks one case `main`
-gets right** — which reduces to the same four rule lines split across two files:
+So the useful work wasn't an issue, it was arbitration. #7339 fixes all forty and both issues'
+verbatim repros, with nothing new. #7369 takes 40 to 15 — 28 fixed, 12 left and **3 broken that
+`main` gets right**, all three the same `python/cpython` directory, now asked as a directory and
+from two depths underneath. That one directory reduces to four rule lines split across two files:
 
 ```
 .gitignore      x/
@@ -455,18 +534,27 @@ documented with the same trailing slash `git check-ignore` uses.
 
 Same corpus, same oracle. Two builds of the same code plus one deliberately patched:
 
-| subject | divergences (4,463 queries) |
-|---|---:|
-| 1.2.14 (PyPI wheel) | **28** |
-| tip of `main`, `2d728c2a` | **28** |
-| the same, with `find_matching`'s filter loop reversed | 9 |
+| subject | divergences (8,953 queries) | was, at 4,463 |
+|---|---:|---:|
+| 1.2.14 (PyPI wheel) | **68** | 28 |
+| tip of `main`, `2d728c2a` | **68** | 28 |
+| the same, with `find_matching`'s filter loop reversed | 45 | 9 |
 
-The first two rows are the same 28 cases, not just the same count — `dulwich/ignore.py` is
+The first two rows are the same 68 cases, not just the same count — `dulwich/ignore.py` is
 byte-identical in the wheel and on `main`, so nothing merged since the release touches this.
-`porcelain.check_ignore` — what `dulwich check-ignore` runs — gives the same 28 as the API, which
-is what makes it a user-visible number rather than an internal-API detail.
+`porcelain.check_ignore` — what `dulwich check-ignore` runs — gives the same answers as the API,
+which is what makes it a user-visible number rather than an internal-API detail.
 
-**22 of the 28 are one mechanism: between two rule files, the shallower one decides.** git gives
+**dulwich is the only subject here whose answer depends on how deep you ask.** The `inside` variant
+asks about `D/n/_gic_keep` and `D/n/_gic_deep/_gic_keep`; git prunes the whole subtree, so the
+oracle scores the two identically and thirteen of the fourteen other columns split their new
+divergences exactly in half. dulwich splits 19 / 21. Two directories in `psf/black`'s test data —
+`…/invalid_nested_gitignore_tests/a/.venv` and `…/a/.coverage` — get the direct child right and the
+grandchild wrong. Both are under the file holding a bare `!` (below), which is the same rule file
+that breaks `ripgrep` and `fd`. That asymmetry is invisible to any bench that asks about one depth,
+and it is the reason both are asked.
+
+**22 of the original 28 are one mechanism: between two rule files, the shallower one decides.** git gives
 the deeper `.gitignore` precedence; `find_matching` accumulates its filters with
 `filters.insert(0, …)`, walks them deepest-first, and `is_ignored` takes the last match — which
 therefore comes from the file closest to the root. Reduced from `nodejs/node`, with git re-asked at
@@ -482,9 +570,9 @@ dulwich is right, which is the paired control: ordering *within* a file is corre
 *between* files is reversed. It goes both ways — cpython's root `.idea/` against a nested `!.idea/`
 comes back ignored where git re-includes it.
 
-The third row is an instrument, not a proposal. Reversing that one loop fixes 22, leaves 6 and
-**breaks 3**, so it is not a fix; it is what attributes the 22 to that line rather than to my
-harness. Its 48-test suite passes identically with and without the change, so nothing in the suite
+The third row is an instrument, not a proposal. Reversing that one loop fixed 22, left 6 and
+**broke 3** on the old corpus; on the full 8,953 it fixes 29, leaves 39 and breaks 6. Either way it
+is not a fix — it is what attributes those cases to that line rather than to my harness. Its 48-test suite passes identically with and without the change, so nothing in the suite
 pins the current order either way — and `test_nested_gitignores` covers this exact shape and passes
 only because its root negation matches a directory instead of the queried file.
 
@@ -519,23 +607,40 @@ the two columns is one import path, v5 → v6:
 
 | entry point | v5.19.2 | `main` (v6 alpha) |
 |---|---:|---:|
-| `ReadPatterns` + `Matcher.Match` (4,463 queries) | **4** | **2** |
+| `ReadPatterns` + `Matcher.Match` (8,953 queries) | **18** | **12** |
+| the same, at 4,463 | 4 | 2 |
 | `.git/info/exclude` corpus (99) | **0** | **0** |
-| `Worktree.Status()` (2,224 file queries) | **1** | **1** — *a different one* |
+| `Worktree.Status()` (6,714 file queries) | **15** | **5** |
+| the same, at 2,224 | 1 | 1 — *a different one* |
+
+The gap between the release and `main` widens with the third variant rather than closing: 4 → 18
+against 2 → 12 on the matcher, and 1 → 15 against 1 → 5 through `Status()`. Whatever `main` did to
+the `**` handling, it also inherits better.
 
 Two open pull requests were measured the same way, by their `merge` ref (what GitHub computes as
-main + PR), so the column isolates the patch: [#2318](https://github.com/go-git/go-git/pull/2318)
-leaves all 4,463 answers untouched and fixes both of its own repros, which is an endorsement of
-safety rather than of impact; [#2311](https://github.com/go-git/go-git/pull/2311) fixes #2112 and
-takes `main` from 2 to **4**, because it re-includes descendants of a directory that `!dir/` puts
-back. The `Status()` divergence is filed as [#2369](https://github.com/go-git/go-git/issues/2369),
+main + PR), so the column isolates the patch. [#2318](https://github.com/go-git/go-git/pull/2318)
+leaves **all 8,953** answers untouched — 0 fixed, 0 broken, re-checked as sets — while fixing both
+of its own repros; that is an endorsement of safety rather than of impact, and it survived the
+corpus doubling unchanged. [#2311](https://github.com/go-git/go-git/pull/2311) fixes #2112 and takes
+`main` from 12 to **28**: it fixes nothing in the corpus and breaks sixteen queries `main` answers
+correctly, because it re-includes descendants of a directory that `!dir/` puts back. At 4,463 that
+damage read as two queries. Same patch, same binary — the corpus simply learned to ask about what
+is *under* the directory, which is where a re-inclusion bug does its work.
+
+The `Status()` divergence is filed as [#2369](https://github.com/go-git/go-git/issues/2369),
 bisected to `70ab8844` — a commit that fixed the mirror-image case, so it traded one broken family
 for another rather than causing a plain regression.
 
-Four divergences in 4,463 is the closest any unpatched subject in this bench has come to git, and
-the `exclude` column is a clean zero where libgit2's `main` gets 33 wrong. The interesting part is
-not the totals, though. It is that on `main` the two entry points **disagree with each other, in
-opposite directions**, so which answer you get depends on which door you came through.
+Twelve divergences in 8,953, and the `exclude` column is a clean zero where libgit2's `main` gets 33
+wrong. Worth saying plainly, because I wrote the opposite here yesterday: at 4,463 go-git's `main`
+was the closest unpatched subject in the bench, 2 against ripgrep's 5. At 8,953 it is second — 12
+against ripgrep and fd's 11 — and the ranking flipped without a line of anyone's code changing. A
+league table that reorders itself when you ask a new *kind* of question was never measuring what it
+looked like it was measuring; that is an argument for reading the per-class rows and not the total.
+
+The interesting part is not the totals anyway. It is that on `main` the two entry points **disagree
+with each other, in opposite directions**, so which answer you get depends on which door you came
+through.
 
 **`main` fixes the `**` the release gets wrong.** `grafana/grafana` ignores `testdata/**output/`,
 where the `**` is glued to text inside a component — git treats consecutive asterisks there as an
@@ -593,6 +698,12 @@ control isolates the engine swap instead of five months of drift.
 | `6aa9efc` — own matcher | 4 | 1 |
 | `3edf6ec` — delegating, v1.1.1 | **5** | **4** |
 | the same, both library bugs patched | **2** | **1** |
+
+These four rows are the **only** ones on this page still counted over the old 4,463 questions. They
+were measured to answer the March question before the `inside` variant existed; re-running them is
+the next thing on my list, and the one build of the four already re-run — `main` — goes from 2 to
+12, so the others will move too and the gaps are what to watch, not the absolute numbers. I'd
+rather say that than quietly print a figure whose denominator differs from every other one here.
 
 Delegating as it stands trades two failures for three, and the three are one library bug
 ([git-pkgs/gitignore#22](https://github.com/git-pkgs/gitignore/pull/22)) that also accounts for the
@@ -664,14 +775,21 @@ out of its way to keep.
 ### Three recipes over one unchanged library
 
 If the level-2 divergence lives in the caller's eight lines, the cheap way to prove it is to hold
-the library still and change only those lines. Same `pathspec` 1.1.1, same 66 cases, same 4,463
+the library still and change only those lines. Same `pathspec` 1.1.1, same 99 cases, same 8,953
 queries, same oracle — [`recipes.py`](recipes.py):
 
-| recipe | wrong | conformant | what it is |
-|---|---|---|---|
-| flat | **1,253** | 71.925 % | concatenate every rule file into one spec, ask it the full path |
-| chain | 3 | 99.933 % | one spec per rule file, deepest one that decides wins |
-| chain + prune | 2 | 99.955 % | chain, and a path inherits an ignored ancestor directory |
+| recipe | wrong | conformant | at 4,463 | what it is |
+|---|---|---|---|---|
+| flat | **2,547** | 71.551 % | 1,253 · 71.925 % | concatenate every rule file into one spec, ask it the full path |
+| chain | 7 | 99.922 % | 3 · 99.933 % | one spec per rule file, deepest one that decides wins |
+| chain + prune | 4 | 99.955 % | 2 · 99.955 % | chain, and a path inherits an ignored ancestor directory |
+
+The flat recipe is the one row in this README the third variant barely moved: 71.925 % → 71.551 %,
+a rate that survives doubling the corpus almost exactly. That is what a *rate* looks like when the
+failure is structural rather than concentrated in a handful of shapes — flattening loses the
+anchor for every rule file that isn't the root's, and the new questions are more of the same
+questions. The two chained recipes double along with the corpus, which is the opposite reading:
+their handful of failures are specific bugs, and each one now shows up from more angles.
 
 All **33 repositories** fail the flat recipe. It is not a strawman I built to lose: it is what
 `from_lines` looks like it wants when you read the docstring, and the ninety seconds of "just put
@@ -679,38 +797,43 @@ all the rules in one list" that precede noticing that a rule file has a *positio
 is anchoring. `/dist` in `adev/shared-docs/pipeline/tutorials/common/.gitignore` means that
 directory's own `dist`; flattened, it means the repository root's.
 
-The 1,253 are not one bug counted 1,253 times, so `--breakdown` splits them:
+The 2,547 are not one bug counted 2,547 times, so `--breakdown` splits them:
 
 | | over-ignores | under-ignores |
 |---|---|---|
-| leaked into another branch | 1,072 | 11 |
-| no pattern matches at all | — | 138 |
-| wrong base, same subtree | 15 | 1 |
-| root file, order/precedence | — | 16 |
-| **total** | **1,087** (86.8 %) | **166** (13.2 %) |
+| leaked into another branch | 2,170 | 25 |
+| no pattern matches at all | — | 280 |
+| wrong base, same subtree | 27 | 5 |
+| root file, order/precedence | — | 40 |
+| **total** | **2,197** (86.3 %) | **350** (13.7 %) |
+
+(`recipes.py --breakdown` prints that cross-tab; until today it printed the two margins separately
+and the cells had to be reconstructed by hand, which is how a table like this acquires numbers
+nobody measured.)
 
 The direction matters more than the total. Over-ignoring is the failure that drops a file the
 repository deliberately kept — the `.devcontainer/base/devcontainer.json` failure, at scale — and
 it is 87 % of this. Under-ignoring is the mirror image of the same lost anchor: `/dist` no longer
 reaching `devtools/dist`, so nothing matches and the walker hands you a build directory.
 
-The three chain misses are worth naming individually, because three is small enough to attribute
-one by one instead of quoting a rate:
+The chain misses are worth naming individually, because seven is small enough to attribute one by
+one instead of quoting a rate — and the seven are the same two mechanisms as the old three, each
+now asked from inside as well:
 
-* `nodejs/node`, the directory `node_modules/` — **the library**. `!**/node_modules/**` wins
-  (`check_file(...).index` says so, I didn't guess), and git does not consider `dir/**` to cover
-  `dir` itself. Same shape as the `.devcontainer` case above; it has a sane answer in
-  `match_tree_files`.
-* `ollama/ollama`, `app/ui/app/.vscode/extensions.json`, two variants — **the recipe**. The
+* `nodejs/node`, `node_modules/` and the two files under it — **the library**.
+  `!**/node_modules/**` wins (`check_file(...).index` says so, I didn't guess), and git does not
+  consider `dir/**` to cover `dir` itself. Same shape as the `.devcontainer` case above; it has a
+  sane answer in `match_tree_files`.
+* `ollama/ollama`, `app/ui/app/.vscode/extensions.json`, all four variants — **the recipe**. The
   deepest rule file re-includes it with `!.vscode/extensions.json`, but `app/.gitignore` already
   excluded the `.vscode` *directory*, and git never walks in to read the negation. Adding pruning
-  fixes both, which is the whole argument for R2.
+  fixes all four, which is the whole argument for R2.
 
 And R2's misses are **not** a subset of R1's — I predicted they would be and was wrong. Pruning
 buys `ollama` and loses `supabase/supabase`'s `docker/volumes/functions/deno.jsonsample`, a file
 git tracks: `volumes/functions/**` doesn't match its own directory, `pathspec` says it does, and
 the prune then propagates the library's wrong answer to everything underneath. A prune amplifies
-whatever the matcher got wrong about directories. Zero of the four is my harness.
+whatever the matcher got wrong about directories. Zero of the seven is my harness.
 
 **What this table is not.** It is a comparison of recipes *measured on `pathspec`*, not a claim
 about how often each one appears in the wild. I tried to measure that and couldn't: grep.app
@@ -823,17 +946,18 @@ doesn't.
 Thin spots, stated rather than discovered by you later: the **level-1** corpus is one root
 `.gitignore` per repository, so nested layering isn't in it at all — that's what
 `corpus/cases_l2.json` and the section above exist for, and it's a separate corpus with a separate
-generator (`build_corpus_l2.py`), built the same way and just as frozen. Level 2 has its own gap:
-every query is a **file** path, so tools that decide about a *directory* before recursing into it
-are only measured through the files underneath. Adding directory queries is the next thing. And the four
-rows in the table above come from a run on 23 Aug 2026 whose JSON output I still have; the machine
-I'm writing this on no longer has those three libraries installed, so `tests.sh` skips the adapter
-integration test and reports `not installed here, skipped`. My own 27 tests pass without them.
+generator (`build_corpus_l2.py`), built the same way and just as frozen. Level 2's own gap was that
+every query was a **file** path; the `dirs` variant closed that in the 67th session and the `inside`
+variant closed the other half of it on 10 Sep 2026 — and both times the gap was found by a subject
+failing in the wild, not by me auditing the corpus. Assume there is a third one. And the four rows
+in the table above come from a run on 23 Aug 2026 whose JSON output I still have; the machine I'm
+writing this on no longer has those three libraries installed, so `tests.sh` skips the adapter
+integration test and reports `not installed here, skipped`. My own 34 tests pass without them.
 
 ## Tests
 
 ```sh
-bash tests.sh      # 27 tests, OK (skipped=1), about a second
+bash tests.sh      # 34 tests, OK (skipped=1), about two seconds
 ```
 
 MIT. Built by Midas.

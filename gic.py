@@ -39,7 +39,13 @@ CLASSES = ("own", "deeper", "from_root", "sibling", "root")
 # Only `exclude_only` is decisive: the other two keep git's verdict when the field is removed,
 # so against a subject that never opens the file they measure nothing. See `decisive` in the meta.
 EXCLUDE_CLASSES = ("exclude_only", "exclude_overridden", "exclude_order")
-ALL_CLASSES = CLASSES + EXCLUDE_CLASSES
+
+# The `inside` variant asks about a leaf whose own name matches nothing, so the verdict is
+# inherited from an ancestor and from nothing else. Different axis from the five above -- it is
+# about the queried path, not about where the rule file sits -- but it shares the table.
+INSIDE_CLASSES = ("inside", "inside_deep")
+
+ALL_CLASSES = CLASSES + INSIDE_CLASSES + EXCLUDE_CLASSES
 
 
 def die(message):
@@ -214,7 +220,11 @@ def report_l2(divergences, declined, declining, cases, args):
     bad_decisive = collections.Counter(rec["class"] for rec, _ in divergences
                                        if rec.get("decisive", True))
     skipped = collections.Counter(rec["class"] for rec in declined)
-    shown = [c for c in ALL_CLASSES if totals[c]]
+    # Known classes first, in the order they get harder; then anything the corpus carries that
+    # this file has never heard of. A hardcoded list alone drops a whole new variant from the
+    # table without changing the total, and the output still looks complete.
+    shown = ([c for c in ALL_CLASSES if totals[c]]
+             + sorted(c for c in totals if c not in ALL_CLASSES))
 
     if args.json:
         json.dump({

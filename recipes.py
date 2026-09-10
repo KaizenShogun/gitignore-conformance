@@ -142,7 +142,11 @@ def main():
     tot = 0
     bad = {"R0": 0, "R1": 0, "R2": 0}
     repos_failing_flat = set()
-    direction, fam, samples = {}, {}, {}
+    # `cross` is the one that answers the question the other two only gesture at. A family total
+    # and a direction total printed side by side do not give you the cells: "leaked into another
+    # branch" is 86 % of the damage and it goes BOTH ways, and reconstructing the split by eye
+    # from two margins is guessing dressed as arithmetic.
+    direction, fam, cross, samples = {}, {}, {}, {}
     chain_misses = {"R1": [], "R2": []}
 
     for c in cases:
@@ -167,6 +171,7 @@ def main():
                 line, origin = kept[res.index] if res.index is not None else (None, "")
                 f = family(q, origin, line)
                 fam[f] = fam.get(f, 0) + 1
+                cross[(f, d)] = cross.get((f, d), 0) + 1
                 samples.setdefault((f, d), [])
                 if len(samples[(f, d)]) < 2:
                     samples[(f, d)].append((c["repo"], q, origin or "<root>", line))
@@ -184,6 +189,14 @@ def main():
         print("\nfamily of the winning pattern (flat):")
         for k, v in sorted(fam.items(), key=lambda x: -x[1]):
             print(f"  {k:30s} {v:5d}  {100 * v / sum(fam.values()):.1f} %")
+        print("\nfamily x direction (flat):")
+        print(f"  {'family':32s} {'over-ignores':>13s} {'under-ignores':>14s} {'total':>7s}")
+        for f, v in sorted(fam.items(), key=lambda x: -x[1]):
+            over, under = cross.get((f, "over-ignores"), 0), cross.get((f, "under-ignores"), 0)
+            print(f"  {f:32s} {over:13d} {under:14d} {v:7d}")
+        print(f"  {'total':32s} {direction.get('over-ignores', 0):13d}"
+              f" {direction.get('under-ignores', 0):14d} {bad['R0']:7d}")
+
         for (f, d), rows in sorted(samples.items()):
             print(f"\n  {f} / {d}")
             for repo, q, origin, line in rows:
