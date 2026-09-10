@@ -132,15 +132,29 @@ def zip_longest_(*seqs):
         yield tuple(s[i] if i < len(s) else None for s in seqs)
 
 
-def build_repo_case(repo, entry, workdir, as_dirs=False):
+def build_repo_case(repo, entry, workdir, variant="files"):
     """Materialise one repo's rule tree, ask git, return (case, disagreements).
 
-    `as_dirs` builds the same queries as *directories* instead of files. That is a separate case
-    for the same repo, not a bigger one: `d/foo` cannot be a file and a directory in one tree, and
-    a directory-only rule (`build/`) matches exactly one of them. Directories are where a walker
-    can go wrong in a way files cannot show -- git prunes an ignored directory and never looks
-    inside, so a tool that gets the prune wrong is wrong about everything below it at once.
+    Three variants, same rule files, same derived names, different question:
+
+      files   -- `D/name` exists as a file, and the query is that file.
+      dirs    -- `D/name` exists as a directory, and the query is that directory. A separate case
+                 for the same repo, not a bigger one: `D/name` cannot be a file and a directory in
+                 one tree, and a directory-only rule (`build/`) matches exactly one of them.
+                 Directories are where a walker can go wrong in a way files cannot show -- git
+                 prunes an ignored directory and never looks inside, so a tool that gets the prune
+                 wrong is wrong about everything below it at once.
+      inside  -- `D/name` exists as a directory, exactly as in `dirs`, and the query is a file
+                 *underneath* it: `D/name/_gic_keep` and `D/name/_gic_deep/_gic_keep`. Nothing in
+                 the leaf name can match any pattern, so the verdict is entirely inherited from
+                 the ancestor. That is the whole point: it isolates "does this tool carry an
+                 ignored directory down to its contents" from "can this tool match a name".
+
+    `inside` exists because the first two missed a real bug. `git-pkgs/gitignore` matched
+    `mypkg.egg-info/` and not `mypkg.egg-info/PKG-INFO`, and 4,463 queries went green over it: a
+    corpus only ever asks what somebody thought to ask.
     """
+    as_dirs = variant in ("dirs", "inside")
     dirs = pick_dirs(entry)
     rules = {}
     root_text = load_rule_file(repo, "")
@@ -213,6 +227,12 @@ def build_repo_case(repo, entry, workdir, as_dirs=False):
                 # would say nothing at all about an empty one. One file inside makes it visible.
                 with open(os.path.join(full, KEEP), "w", encoding="utf-8") as fh:
                     fh.write("x\n")
+                if variant == "inside":
+                    # One level further down, so a tool that inherits the verdict for a direct
+                    # child but re-decides from scratch deeper has somewhere to show it.
+                    os.makedirs(os.path.join(full, DEEP), exist_ok=True)
+                    with open(os.path.join(full, DEEP, KEEP), "w", encoding="utf-8") as fh:
+                        fh.write("x\n")
             else:
                 os.makedirs(os.path.dirname(full), exist_ok=True)
                 if os.path.isdir(full):
@@ -221,9 +241,21 @@ def build_repo_case(repo, entry, workdir, as_dirs=False):
                     fh.write("x\n")
         except (OSError, ValueError):
             continue             # unrepresentable on this filesystem; not a case
-        created.append((path, cls, owner, pattern))
+        created.append((path, cls, owner, pattern, None, None))
     if not created:
         return None, []
+
+    if variant == "inside":
+        # The directories were materialised so git has a real tree to answer about; what gets
+        # asked is the file underneath each one. The class records which probe it is, and the
+        # directory's own class stays in `dir_class` so the breakdown does not lose it.
+        inherited = []
+        for path, cls, owner, pattern, _, _ in created:
+            inherited.append((path + "/" + KEEP, "inside", owner, pattern, cls, path))
+            inherited.append((path + "/" + DEEP + "/" + KEEP, "inside_deep",
+                              owner, pattern, cls, path))
+        created = inherited
+        as_dirs = False          # from here on these are file queries, and asked as such
 
     # The same bolt level 1 has: if materialising the paths rewrote a rule file, every verdict in
     # this repo is about a tree that is not the one being described. Crash instead of emitting.
@@ -236,7 +268,7 @@ def build_repo_case(repo, entry, workdir, as_dirs=False):
                                    (repo, d or "<root>"))
 
     # ---- three oracles, files only
-    paths = [p for p, _, _, _ in created]
+    paths = [p for p, _, _, _, _, _ in created]
     verdict = check_ignore(repo_dir, paths)
 
     res = git(["status", "--ignored", "--porcelain", "-z"], repo_dir)
@@ -254,7 +286,7 @@ def build_repo_case(repo, entry, workdir, as_dirs=False):
             staged.add(line[5:-1])
 
     out_q, out_i, meta, bad = [], [], [], []
-    for path, cls, owner, pattern in created:
+    for path, cls, owner, pattern, dir_cls, ancestor in created:
         entry_v = verdict.get(path)
         if entry_v is None:
             continue
@@ -270,8 +302,12 @@ def build_repo_case(repo, entry, workdir, as_dirs=False):
         if a == b == c:
             out_q.append(path + "/" if as_dirs else path)
             out_i.append(a)
-            meta.append({"class": cls, "owner": owner, "from_pattern": pattern,
-                         "git_pattern": decided_by, "kind": "dir" if as_dirs else "file"})
+            row = {"class": cls, "owner": owner, "from_pattern": pattern,
+                   "git_pattern": decided_by, "kind": "dir" if as_dirs else "file"}
+            if ancestor is not None:
+                row["dir_class"] = dir_cls
+                row["ancestor"] = ancestor
+            meta.append(row)
         else:
             bad.append({"repo": repo, "path": path, "class": cls,
                         "check_ignore": a, "status": b, "add": c, "pattern": decided_by})
@@ -279,7 +315,7 @@ def build_repo_case(repo, entry, workdir, as_dirs=False):
     if not out_q:
         return None, bad
     return ({"repo": repo, "branch": entry.get("branch"), "level": 2,
-             "variant": "dirs" if as_dirs else "files",
+             "variant": variant,
              "rules": rules, "queries": out_q, "ignored": out_i, "meta": meta}, bad)
 
 
@@ -458,10 +494,10 @@ def build():
     cases, bad, skipped = [], [], []
     for repo in sorted(index):
         got_any = False
-        for as_dirs in (False, True):
+        for variant in ("files", "dirs", "inside"):
             workdir = tempfile.mkdtemp(prefix="gic_l2_")
             try:
-                case, repo_bad = build_repo_case(repo, index[repo], workdir, as_dirs)
+                case, repo_bad = build_repo_case(repo, index[repo], workdir, variant)
             finally:
                 shutil.rmtree(workdir, ignore_errors=True)
             bad.extend(repo_bad)

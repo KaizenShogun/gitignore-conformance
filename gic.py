@@ -353,11 +353,14 @@ def main():
         # in the case -- so `c["kind"]` doesn't exist here and the level-1 filter silently
         # matched nothing to exclude. It accepted --kind and ignored it, which is worse than
         # refusing: two runs with opposite flags printed the same 4,373 queries. The corpus
-        # ships each repository twice, once per variant, so the honest mapping is kind -> variant.
-        variant = {"file": "files", "dir": "dirs"}.get(args.kind)
+        # ships each repository once per variant, so the honest mapping is kind -> variant. Note
+        # `inside` answers to `--kind file`: its queries are files, the directory above them is
+        # scenery. Mapping it to `dir` because it materialises directories would hide 4,490 file
+        # questions behind a flag that promises files.
+        variant = {"file": ("files", "inside"), "dir": ("dirs",)}.get(args.kind)
         cases = [c for c in corpus["cases"]
                  if (not args.repo or c["repo"] == args.repo)
-                 and (not variant or c.get("variant", "files") == variant)]
+                 and (not variant or c.get("variant", "files") in variant)]
         if args.limit:
             cases = cases[:args.limit]
         if not cases:

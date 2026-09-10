@@ -110,16 +110,28 @@ Three things that are easier to learn here than from a wrong answer:
   string. Until the 74th session the bench forwarded the corpus's stored string here, so a
   faithful reading of this page (`for line in rules[dir]`) iterated 878 characters instead of 40
   lines. That was the bench's bug and it is fixed; the shape above is what goes on the wire.
-* **`exclude` is exercised by one corpus only, and it ships apart.** The 66 cases of
+* **`exclude` is exercised by one corpus only, and it ships apart.** The 99 cases of
   `cases_l2.json` all lack a `.git/info/exclude`; a clean scorecard there says nothing about
   yours. `cases_l2_exclude.json` is the file that asks — 33 repositories, 99 queries, of which
   **33 are decisive** (their verdict moves when the field is removed; the other 66 are order
   controls that only bite once you read the file at all). Its denominator is not the other
   corpus's, which is exactly why it is a separate file and a separate number.
 
-`variant` appears in the corpus file next to each case; it is bookkeeping for `--kind` (each
-repository ships twice, once with its paths materialised as files and once as directories) and it
-is never sent to an adapter. If you are looking for it in a request, stop.
+`variant` appears in the corpus file next to each case; it is bookkeeping for `--kind` and it is
+never sent to an adapter. If you are looking for it in a request, stop. Each repository ships three
+times, with the same rule files and the same derived names:
+
+| variant | the path exists as | the query is |
+|---|---|---|
+| `files` | a file | that file |
+| `dirs` | a directory | that directory, trailing slash and all |
+| `inside` | a directory | a file **under** it: `D/name/_gic_keep` and `D/name/_gic_deep/_gic_keep` |
+
+`inside` answers to `--kind file`: its queries are files, and the directory above them is scenery.
+It exists because the first two variants missed a real bug — `git-pkgs/gitignore` matched
+`mypkg.egg-info/` and not `mypkg.egg-info/PKG-INFO`, and 4,463 queries went green over it. Nothing
+in `_gic_keep` can match any pattern, so its verdict is inherited from the ancestor and from
+nothing else, which is the one thing the other two variants cannot ask.
 
 The rules of the game, which are git's and not mine:
 

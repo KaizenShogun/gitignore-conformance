@@ -129,13 +129,24 @@ says trip people up.
 
 So level 2 measures a different subject: not a library, a **tool**. Same protocol, one request per
 repository — you get the whole tree of rule files at once and answer every query. 33 repositories,
-each asked twice: once about paths that are **files** (2,224 queries) and once about the
-**directories** on the way to them (2,239). 4,463 questions, git 2.55.0, `corpus/excluded_l2.json`
-empty again.
+each asked three times over the same rule files: about paths that are **files** (2,224 queries),
+about the **directories** on the way to them (2,239), and about files **inside** those directories
+(4,490). 8,953 questions, git 2.55.0, `corpus/excluded_l2.json` empty again.
 
-The two halves are not decoration. A walker prunes directories; a rule that wrongly kills `docs/`
-never gets the chance to be wrong about `docs/api.md`, so a file-only bench measures the survivors
-of the mistake and not the mistake. Seven of the nine divergences below are directory queries.
+The three are not decoration. A walker prunes directories; a rule that wrongly kills `docs/` never
+gets the chance to be wrong about `docs/api.md`, so a file-only bench measures the survivors of the
+mistake and not the mistake. Seven of the nine divergences below are directory queries.
+
+And the third variant is here because the first two weren't enough, which is worth more than a
+clean story. `inside` asks about `D/name/_gic_keep` and `D/name/_gic_deep/_gic_keep`: leaf names
+that cannot match any pattern, so the verdict is inherited from the ancestor and from nothing else.
+It was added on 10 Sep 2026 after `git-pkgs/gitignore` matched `mypkg.egg-info/` and not
+`mypkg.egg-info/PKG-INFO` while all 4,463 questions stayed green. **Every number below with a
+denominator of 4,463 predates it** — those measurements are still true of the questions they asked,
+and the subject-by-subject columns have not been re-run on the full 8,953 yet. The one subject that
+has been: `git-pkgs/gitignore` went from 2 divergences to 24 when the variant landed, of which 12
+are the `*.egg-info/` bug and 12 are two further ones ([#25](https://github.com/git-pkgs/gitignore/issues/25),
+[#26](https://github.com/git-pkgs/gitignore/issues/26)) that no earlier query could see.
 
 ```sh
 python3 gic.py --level 2 -- python3 adapters/black_adapter.py
@@ -151,9 +162,16 @@ hide the whole finding — a tool can be perfect on its own directory and wrong 
 | `root` | a root rule reaching down into a subdirectory | 16.5% |
 | `deeper` | a rule reaching further down its own subtree | 58.0% |
 | `from_root` | an anchored root rule, `/build`-style | 57.1% |
+| `inside` | a file directly under a queried directory — nothing in its own name matches | 62.3% |
+| `inside_deep` | the same, one level further down | 62.3% |
 
 (The directory half runs hotter — `build/` matches the directory and not the file, so `own` is 95.8%
-ignored there against 76.7% here. Compare rates across tools, not across the two halves.)
+ignored there against 76.7% here. Compare rates across tools, not across the three variants.)
+
+`inside` and `inside_deep` score identically to the query, which is not a bug in either: git
+prunes an ignored directory, so its whole subtree inherits one verdict and the oracle cannot tell
+the two depths apart. A **subject** can — one that inherits for a direct child and re-decides from
+scratch deeper down splits them — which is the only reason both are asked.
 
 ### Two tools, and the difference is a data structure
 
@@ -585,11 +603,21 @@ whole `Status()` column. Patch that and a second one found on the way
 being discussed: the opening repro of #877 passes on all four builds, and the sibling shape from
 #694 — `test/` and `!test/keep` in one file — fails on all four.
 
-**#23 is also a hole in this corpus, and it is worth saying out loud.** The bench never asks about a
-file *inside* a directory matched by a wildcard dir-only pattern, so all 4,463 queries stayed green
-through a bug that hits 9 real rule lines across 8 of the 33 repos — `*.egg-info/` alone appears in
-airflow, transformers, langchain, vscode, flask and pytorch. A corpus built from real rule files
-still only asks the questions someone thought to ask.
+**#23 was also a hole in this corpus, and it is worth saying out loud.** The bench never asked
+about a file *inside* a directory matched by a wildcard dir-only pattern, so all 4,463 queries
+stayed green through a bug that hits 9 real rule lines across 8 of the 33 repos — `*.egg-info/`
+alone appears in airflow, transformers, langchain, vscode, flask and pytorch. A corpus built from
+real rule files still only asks the questions someone thought to ask.
+
+The hole is now the `inside` variant, and closing it paid for itself immediately. On the 8,953
+questions, `git-pkgs/gitignore` at the commit that merged #22 answers 24 wrong instead of 2. Twelve
+are #23, and the patch in [#24](https://github.com/git-pkgs/gitignore/pull/24) removes exactly those
+twelve and breaks none. The other twelve are two bugs nobody had reported: a negation under an
+excluded directory taking effect ([#25](https://github.com/git-pkgs/gitignore/issues/25)) and a
+negation inherited by the contents of the directory it re-includes
+([#26](https://github.com/git-pkgs/gitignore/issues/26)). Both survive deleting the `literalSuffix`
+fast-reject outright, which is how I know they are a different cause and not #23 wearing a hat —
+the control that says so is a build with the shortcut removed entirely, scoring the same 12.
 
 ### One repository where the pruning costs a real file
 

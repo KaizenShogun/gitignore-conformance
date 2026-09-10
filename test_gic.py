@@ -463,11 +463,13 @@ class FrozenCorpusL2(unittest.TestCase):
         """)
         path = os.path.join(HERE, "corpus", "cases_l2.json")
         seen = {}
-        for kind, variant in (("file", "files"), ("dir", "dirs")):
+        # `inside` answers to --kind file: its queries are files. Leaving it out of this tuple is
+        # how the flag would quietly stop covering 4,490 of the file questions.
+        for kind, variants in (("file", ("files", "inside")), ("dir", ("dirs",))):
             proc = run_gic(path, argv, extra=["--level", "2", "--json",
                                               "--kind", kind, "--limit", "2"])
             report = json.loads(proc.stdout)
-            want = [c for c in self.corpus["cases"] if c["variant"] == variant][:2]
+            want = [c for c in self.corpus["cases"] if c["variant"] in variants][:2]
             self.assertEqual(report["checked"], sum(len(c["meta"]) for c in want), kind)
             self.assertEqual(report["repos"], 2, kind)
             # An always-True adapter is wrong about everything git does not ignore, so the
@@ -480,19 +482,36 @@ class FrozenCorpusL2(unittest.TestCase):
             seen[kind] = [r["path"] for r in report["divergences"]]
         self.assertNotEqual(seen["file"], seen["dir"])
 
-    def test_the_two_variants_ask_the_same_tree(self):
-        """Same rules, same names, one materialised as files and one as directories. If the
-        trees drifted apart the two numbers would not be comparable, which is the whole point."""
+    def test_the_three_variants_ask_the_same_tree(self):
+        """Same rules, same names; files, directories, and files under those directories. If the
+        trees drifted apart the numbers would not be comparable, which is the whole point."""
         by_repo = collections.defaultdict(dict)
         for case in self.corpus["cases"]:
             by_repo[case["repo"]][case["variant"]] = case
         paired = 0
-        for repo, pair in by_repo.items():
-            if len(pair) != 2:
+        for repo, group in by_repo.items():
+            if len(group) != 3:
                 continue
             paired += 1
-            self.assertEqual(pair["files"]["rules"], pair["dirs"]["rules"], repo)
+            self.assertEqual(group["files"]["rules"], group["dirs"]["rules"], repo)
+            self.assertEqual(group["files"]["rules"], group["inside"]["rules"], repo)
         self.assertGreater(paired, 20)
+
+    def test_inside_queries_are_inherited_and_nothing_else(self):
+        """The point of `inside` is that its leaf name cannot match anything, so the verdict comes
+        from the ancestor. A query whose leaf were a real name would be a `deeper` in disguise."""
+        n = 0
+        for case in self.corpus["cases"]:
+            if case["variant"] != "inside":
+                continue
+            for query, meta in zip(case["queries"], case["meta"]):
+                n += 1
+                self.assertFalse(query.endswith("/"), query)
+                self.assertEqual(meta["kind"], "file", query)
+                self.assertIn(meta["class"], ("inside", "inside_deep"), query)
+                self.assertTrue(query.startswith(meta["ancestor"] + "/"), query)
+                self.assertEqual(os.path.basename(query), "_gic_keep", query)
+        self.assertGreater(n, 1000)
 
 
 if __name__ == "__main__":
