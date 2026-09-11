@@ -694,25 +694,36 @@ control isolates the engine swap instead of five months of drift.
 
 | build | `Matcher.Match` | `Status()` |
 |---|---:|---:|
-| `main` (2026-09-09) | 2 | 1 |
-| `6aa9efc` — own matcher | 4 | 1 |
-| `3edf6ec` — delegating, v1.1.1 | **5** | **4** |
-| the same, both library bugs patched | **2** | **1** |
+| `main` (2026-09-09) | 12 | 5 |
+| `6aa9efc` — own matcher | 18 | 15 |
+| `3edf6ec` — delegating, v1.1.1 + [#22](https://github.com/git-pkgs/gitignore/pull/22) | 24 | 23 |
+| the same, library at **HEAD** (#22 and #24 merged) | **12** | **11** |
 
-These four rows are the **only** ones on this page still counted over the old 4,463 questions. They
-were measured to answer the March question before the `inside` variant existed; re-running them is
-the next thing on my list, and the one build of the four already re-run — `main` — goes from 2 to
-12, so the others will move too and the gaps are what to watch, not the absolute numbers. I'd
-rather say that than quietly print a figure whose denominator differs from every other one here.
+Same 8,953 questions as every other number on this page (6,714 under `Status()`, which declines
+directories).
 
-Delegating as it stands trades two failures for three, and the three are one library bug
-([git-pkgs/gitignore#22](https://github.com/git-pkgs/gitignore/pull/22)) that also accounts for the
-whole `Status()` column. Patch that and a second one found on the way
-([#23](https://github.com/git-pkgs/gitignore/issues/23): a dir-only pattern with a wildcard,
-`*.egg-info/`, matches the directory but nothing inside it) and delegating lands exactly where
-`main` already is. The engine choice turns out to be orthogonal to the bug in the issue where it is
-being discussed: the opening repro of #877 passes on all four builds, and the sibling shape from
-#694 — `test/` and `!test/keep` in one file — fails on all four.
+Re-running these changed the answer I had written. On the old 4,463 questions the patched delegating
+build scored 2 and 1 — exactly `main` — and I concluded that delegating "lands where `main` already
+is". That was an artefact of the corpus: it never asked what was *inside* a directory, which is
+where an engine swap shows up.
+
+The last row is the one that answers the question as of today. v1.1.1 is from March; since then #22
+and [#24](https://github.com/git-pkgs/gitignore/pull/24) are merged, and the library measured on its
+own is at 12. Built into go-git, delegating to that HEAD gives 12 under `Matcher.Match` — and
+compared as sets, the *same* twelve `main` already fails. Nothing fixed, nothing broken, a genuine
+tie at the matcher.
+
+`Status()` is where delegating still costs something: 11 against 5, buying one case and losing
+seven. All seven are contents of a directory whose name reads like a file —
+`.vscode/extensions.json/…` in ollama, `docker/volumes/functions/main/index.ts/…` in supabase —
+which is exactly the inherited-verdict shape the `inside` variant was added to ask about. Whether
+they trace to [#25](https://github.com/git-pkgs/gitignore/issues/25) or
+[#26](https://github.com/git-pkgs/gitignore/issues/26) I have not pinned down; the number is what I
+am reporting, not the cause.
+
+The engine choice stays orthogonal to the bug in the issue where it is being discussed: the opening
+repro of #877 passes on every build, and the sibling shape from #694 — `test/` and `!test/keep` in
+one file — fails on every build.
 
 **#23 was also a hole in this corpus, and it is worth saying out loud.** The bench never asked
 about a file *inside* a directory matched by a wildcard dir-only pattern, so all 4,463 queries
