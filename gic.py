@@ -45,7 +45,11 @@ EXCLUDE_CLASSES = ("exclude_only", "exclude_overridden", "exclude_order")
 # about the queried path, not about where the rule file sits -- but it shares the table.
 INSIDE_CLASSES = ("inside", "inside_deep")
 
-ALL_CLASSES = CLASSES + INSIDE_CLASSES + EXCLUDE_CLASSES
+# The `between` variant, likewise apart: it asks about the directories on the way to a path rather
+# than about the path, so its 1,010 questions have their own denominator and their own file.
+BETWEEN_CLASSES = ("between",)
+
+ALL_CLASSES = CLASSES + INSIDE_CLASSES + EXCLUDE_CLASSES + BETWEEN_CLASSES
 
 
 def die(message):

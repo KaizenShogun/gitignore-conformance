@@ -524,5 +524,66 @@ class FrozenCorpusL2(unittest.TestCase):
         self.assertEqual(missing, set(), "classes the report would silently drop: %s" % missing)
 
 
+class FrozenCorpusBetween(unittest.TestCase):
+    """The `between` variant: the directories on the way to a path, in its own file."""
+
+    @classmethod
+    def setUpClass(cls):
+        path = os.path.join(HERE, "corpus", "cases_l2_between.json")
+        if not os.path.exists(path):
+            raise unittest.SkipTest("no corpus/cases_l2_between.json -- run build_between_l2.py")
+        with open(path, encoding="utf-8") as fh:
+            cls.corpus = json.load(fh)
+        with open(os.path.join(HERE, "corpus", "cases_l2.json"), encoding="utf-8") as fh:
+            cls.frozen = json.load(fh)
+
+    def test_every_query_is_a_directory_on_the_way_to_a_frozen_one(self):
+        """The variant's whole claim. A query here must be a proper ancestor of a path the
+        `files` corpus already asks about -- not a new path, not the leaf itself. If one is the
+        leaf, this stopped being a fourth question and became a copy of `dirs`."""
+        leaves = {}
+        for case in self.frozen["cases"]:
+            if case.get("variant", "files") == "files":
+                leaves[case["repo"]] = set(case["queries"])
+        seen = 0
+        for case in self.corpus["cases"]:
+            self.assertEqual(case["variant"], "between")
+            theirs = leaves[case["repo"]]
+            for query in case["queries"]:
+                self.assertTrue(query.endswith("/"), query)
+                bare = query.rstrip("/")
+                self.assertNotIn(bare, theirs, "%s is the leaf, which `dirs` already asks" % bare)
+                self.assertTrue(any(leaf.startswith(bare + "/") for leaf in theirs),
+                                "%s is on the way to nothing" % bare)
+                seen += 1
+        self.assertGreater(seen, 900)
+
+    def test_it_asks_the_same_tree_as_the_files_variant(self):
+        """Same rule files, byte for byte. A different tree would make the two runs two benches."""
+        rules = {c["repo"]: c["rules"] for c in self.frozen["cases"]
+                 if c.get("variant", "files") == "files"}
+        for case in self.corpus["cases"]:
+            self.assertEqual(case["rules"], rules[case["repo"]], case["repo"])
+
+    def test_the_canary_never_reaches_the_corpus(self):
+        """The probe appends `!gic_canary_probe` to rule files to find the truth. That line is
+        how the answer was obtained; shipping it would change the question."""
+        for case in self.corpus["cases"]:
+            for directory, text in case["rules"].items():
+                self.assertNotIn("gic_canary_probe", text, "%s %r" % (case["repo"], directory))
+
+    def test_the_answers_are_not_all_the_same(self):
+        """A variant where nothing is ignored measures the harness, not the subject."""
+        ignored = sum(sum(1 for x in c["ignored"] if x) for c in self.corpus["cases"])
+        self.assertGreater(ignored, 20)
+        self.assertLess(ignored, self.corpus["n_queries"] - 20)
+
+    def test_the_class_survives_the_report_filter(self):
+        """`between` was missing from `ALL_CLASSES` when the corpus was first built, which would
+        have dropped all 1,010 rows from the per-class table while the total stayed right."""
+        carried = {meta["class"] for case in self.corpus["cases"] for meta in case["meta"]}
+        self.assertEqual(carried - set(gic.ALL_CLASSES), set())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

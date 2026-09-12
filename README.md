@@ -132,8 +132,13 @@ says trip people up.
 So level 2 measures a different subject: not a library, a **tool**. Same protocol, one request per
 repository — you get the whole tree of rule files at once and answer every query. 33 repositories,
 each asked three times over the same rule files: about paths that are **files** (2,224 queries),
-about the **directories** on the way to them (2,239), and about files **inside** those directories
+about those same paths as **directories** (2,239), and about files **inside** those directories
 (4,490). 8,953 questions, git 2.55.0, `corpus/excluded_l2.json` empty again.
+
+(That middle line read "the directories on the way to them" until 12 Sep 2026, which was a nicer
+sentence than it was a true one. `dirs` asks about the leaf, as a directory. The directories
+genuinely *on the way* — `D` itself, the `_gic_deep` between `D` and the leaf — were asked by no
+variant at all; [a fourth one](#the-fourth-variant-the-directories-on-the-way) now asks them.)
 
 The three are not decoration. A walker prunes directories; a rule that wrongly kills `docs/` never
 gets the chance to be wrong about `docs/api.md`, so a file-only bench measures the survivors of the
@@ -194,6 +199,46 @@ from 2 divergences to 24 on the branch that had just merged my [#22](https://git
 of which 12 are the `*.egg-info/` bug and 12 are two further ones
 ([#25](https://github.com/git-pkgs/gitignore/issues/25),
 [#26](https://github.com/git-pkgs/gitignore/issues/26)) that no earlier query could see.
+
+#### The fourth variant: the directories on the way
+
+Added 12 Sep 2026, and it ships apart — `corpus/cases_l2_between.json`, built by
+`build_between_l2.py`, 1,010 questions with their own denominator. It takes every path in the
+frozen corpus and asks about the directories git walks *through* to reach it. 1,001 of those 1,010
+path strings appear in no frozen variant; 40 of them are ignored, 36 of those newly askable.
+
+The oracle is not the triple rule the file queries use, because for a directory those three
+answers are one answer in three hats: `check-ignore d/` matches the pattern `d/*` (in wildmatch
+`*` matches the empty string too), `!! d/` in `status --ignored` conflates "this directory is
+ignored" with "everything in it happens to be", and "nothing staged below" is true of both. They
+fire together on `d/*`, so their agreement proves nothing. It uses level 1's re-inclusion probe
+instead — drop a canary, negate it in the directory's *own* rule file, see whether git stages it —
+with `check-ignore` and the staging falsifier as the other two. `excluded_l2_between.json` is
+empty: nothing was dropped.
+
+What it found, measured across the whole `git-pkgs/gitignore` gradient on the same day:
+
+| build | divergences / 1,010 |
+|---|---:|
+| v1.1.1, and `main` after [#22](https://github.com/git-pkgs/gitignore/pull/22) and [#24](https://github.com/git-pkgs/gitignore/pull/24) | 1 |
+| each of the four patches measured for #25 and #26 | 1 |
+| [#27](https://github.com/git-pkgs/gitignore/pull/27), the maintainer's | **0** |
+
+One row, the same one every time: supabase's `docker/.gitignore` has `volumes/functions/**`, and
+git does not exclude the directory `volumes/functions` itself — a trailing `**` matches the
+contents, not the container. Six of the seven builds say it does. The seventh is the branch that
+made a trailing `**` consume at least one segment.
+
+That row is the argument for the variant, and the count is the argument against overselling it.
+One finding in 1,010 questions is a coverage hole closed, not a harvest — most intermediate
+directories in a real repository are quiet. What the hole cost was specific: this bug had been
+visible here only as *breakage of my own candidate patch*, where a bug in the library and a bug in
+the patch look identical. Asked directly, from a real repository's rule file, it has an owner.
+
+```sh
+python3 build_between_l2.py
+python3 gic.py --level 2 --corpus corpus/cases_l2_between.json -- python3 adapters/your_adapter.py
+```
 
 ```sh
 python3 gic.py --level 2 -- python3 adapters/black_adapter.py

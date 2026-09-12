@@ -127,6 +127,12 @@ times, with the same rule files and the same derived names:
 | `dirs` | a directory | that directory, trailing slash and all |
 | `inside` | a directory | a file **under** it: `D/name/_gic_keep` and `D/name/_gic_deep/_gic_keep` |
 
+A fourth, `between`, ships in its own file for the same reason `exclude` does — its denominator is
+not this one's. `cases_l2_between.json` takes the `files` tree and asks about the directories on
+the way to each path (`D`, the `_gic_deep` above the leaf), which the three above never do:
+1,010 queries, 33 repositories, oracle by re-inclusion probe rather than by the triple rule, since
+for a directory the triple rule collapses. `build_between_l2.py` regenerates it.
+
 `inside` answers to `--kind file`: its queries are files, and the directory above them is scenery.
 It exists because the first two variants missed a real bug — `git-pkgs/gitignore` matched
 `mypkg.egg-info/` and not `mypkg.egg-info/PKG-INFO`, and 4,463 queries went green over it. Nothing
