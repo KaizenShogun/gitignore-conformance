@@ -175,6 +175,7 @@ makes the two runs a paired contrast instead of two different benches.
 | `go-git` v5.19.2, `Status()` | 1 / 2,224 | 15 / 6,714 | 15.0 |
 | `go-git` `main`, `Status()` | 1 / 2,224 | 5 / 6,714 | 5.0 |
 | `git-pkgs/gitignore` v1.1.1 | 5 | **27** | 5.4 |
+| `git-pkgs/gitignore` v1.3.0 | not run | **0** | — |
 | `dulwich` 1.2.14 | 28 | 68 | 2.4 |
 | `dulwich` `main` | 28 | 68 | 2.4 |
 
@@ -223,6 +224,7 @@ What it found, measured across the whole `git-pkgs/gitignore` gradient on the sa
 | v1.1.1, and `main` after [#22](https://github.com/git-pkgs/gitignore/pull/22) and [#24](https://github.com/git-pkgs/gitignore/pull/24) | 1 |
 | each of the four patches measured for #25 and #26 | 1 |
 | [#27](https://github.com/git-pkgs/gitignore/pull/27), the maintainer's | **0** |
+| v1.3.0, the release that carries it | **0** |
 
 One row, the same one every time: supabase's `docker/.gitignore` has `volumes/functions/**`, and
 git does not exclude the directory `volumes/functions` itself — a trailing `**` matches the
@@ -752,7 +754,10 @@ build scored 2 and 1 — exactly `main` — and I concluded that delegating "lan
 is". That was an artefact of the corpus: it never asked what was *inside* a directory, which is
 where an engine swap shows up.
 
-The last row is the one that answers the question as of today. v1.1.1 is from March; since then #22
+(That table is the state of 11 Sep 2026. It was overtaken two days later by the library's own
+fix — [see below](#13-sep-2026-the-library-is-fixed-and-delegating-got-worse) before quoting it.)
+
+The last row answered the question at the time. v1.1.1 is from March; since then #22
 and [#24](https://github.com/git-pkgs/gitignore/pull/24) are merged, and the library measured on its
 own is at 12. Built into go-git, delegating to that HEAD gives 12 under `Matcher.Match` — and
 compared as sets, the *same* twelve `main` already fails. Nothing fixed, nothing broken, a genuine
@@ -785,6 +790,41 @@ negation inherited by the contents of the directory it re-includes
 ([#26](https://github.com/git-pkgs/gitignore/issues/26)). Both survive deleting the `literalSuffix`
 fast-reject outright, which is how I know they are a different cause and not #23 wearing a hat —
 the control that says so is a build with the shortcut removed entirely, scoring the same 12.
+
+#### 13 Sep 2026: the library is fixed, and delegating got worse
+
+[#27](https://github.com/git-pkgs/gitignore/pull/27) merged, and with #30, #31 and #32 behind it
+became **v1.3.0**. The library on its own is now at **0 / 8,953** and 0 / 1,010. On the
+8,953 the only other subject at zero is `libgit2` with #7339 applied. Controls run the same day:
+the pre-#27 build still answers 12 and 1, same rows; go-git `main` still answers 12 and 5.
+
+The delegating build does not inherit that. Same `3edf6ec`, same helper, only the library tree
+swapped:
+
+| build | `Matcher.Match` | `Status()` |
+|---|---:|---:|
+| go-git `main` | 12 / 8,953 | 5 / 6,714 |
+| `3edf6ec` delegating, library just before #27 | 12 | 11 |
+| `3edf6ec` delegating, library at **v1.3.0** | **84** | **81** |
+| v1.3.0 on its own, whole-tree matcher | **0** | — |
+
+The 82 new ones all point one way — git says not ignored, go-git says ignored — over 10 repos and
+14 pattern shapes. The cause is the bridge, not the library: `pattern.Match` in that branch builds
+one library matcher per pattern per query, and since v1.3.0 a matcher walks the parent directories
+of the path it is handed. So `.vscode/*`, alone in its own matcher, now claims everything under
+`.vscode/settings.json`, while `!.vscode/settings.json`, alone in *its* matcher, no longer reaches
+that descendant at all — the implicit trailing `**` that used to carry it there went out with #27.
+Two bugs had been cancelling. Reduced to two rules, with `settings.json` a directory:
+
+```
+.vscode/*
+!.vscode/settings.json
+```
+
+git does not ignore `.vscode/settings.json/keep.txt`; the branch on v1.3.0 does; the library asked
+directly does not. What is worth delegating is the whole-tree `Matcher` — the parent walk and
+last-match-wins across every rule file live there, and a per-pattern bridge delegates the pattern
+and keeps the matching.
 
 ### One repository where the pruning costs a real file
 
