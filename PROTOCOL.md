@@ -71,6 +71,29 @@ taken out.
   `git check-ignore .devcontainer/` matches and `git check-ignore .devcontainer` does not. If your
   library has no way to say "this is a directory", answer `null` for directory queries rather than
   stripping the slash.
+* **…but a trailing slash also makes git a liar, on exactly one family.** Measured with git 2.55.0
+  on 2026-09-13. A `.gitignore` line that becomes empty once git strips unescaped trailing
+  whitespace — one space, three spaces, or the lone `\r` that a blank line in a **CRLF** file
+  leaves behind — makes `check-ignore` report *any* path you ask about **with a trailing slash** as
+  ignored, blaming an empty pattern. The same git disagrees with itself one command later:
+
+  ```
+  $ printf ' \n' > .gitignore
+  $ git check-ignore -v --no-index build/
+  .gitignore:1:	build/          <- "ignored", empty pattern
+  $ git check-ignore --no-index build
+  $                               <- same path without the slash: not ignored
+  $ git status --porcelain --ignored | grep build
+  ?? build/                       <- and status, which is what decides commits, agrees
+  ```
+
+  A truly empty line does not do it, a tab does not do it, an escaped `\ ` does not do it. Only a
+  line that *looks* like a pattern until git trims it. This cost me a wrong number: measuring a
+  dulwich fix, the slash oracle said 13 remaining divergences where the materialised tree said 1,
+  and 12 of the 13 were the oracle. The corpus here is clean — 0 such lines in its 13,648 lines
+  from 536 real `.gitignore` files — so the frozen expectations are not affected. If you build your
+  own cases, either materialise the tree and ask git without the slash, or check your rule files
+  for that line first.
 * **Write to stderr, not stdout.** Anything you print on stdout that is not a reply line will be
   read as a malformed reply, and the bench will tell you so and stop.
 * **One process, many requests.** Build your matcher per request; the patterns change every time.
