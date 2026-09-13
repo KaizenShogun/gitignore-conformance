@@ -130,7 +130,14 @@ tool nobody reviews, and it's exactly the "layering, anchoring and directory sem
 says trip people up.
 
 So level 2 measures a different subject: not a library, a **tool**. Same protocol, one request per
-repository — you get the whole tree of rule files at once and answer every query. 33 repositories,
+repository — you get the whole tree of rule files at once and answer every query. **33** repositories,
+not the 43 of level 1: a tree of rule files needs more than a root `.gitignore`, and ten of the 43
+have only that one. Whenever a number on this page is attached to 8,953 queries, its census is 33;
+43 belongs to level 1 and its 9,852. (I mixed the two up myself in a comment elsewhere on 13 Sep
+2026, which is why it is now said out loud here. `--json` reports `repos` and `cases_answered`
+separately for the same reason: 33 repos come to 99 cases, three variants each.)
+
+33 repositories,
 each asked three times over the same rule files: about paths that are **files** (2,224 queries),
 about those same paths as **directories** (2,239), and about files **inside** those directories
 (4,490). 8,953 questions, git 2.55.0, `corpus/excluded_l2.json` empty again.

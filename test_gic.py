@@ -471,7 +471,10 @@ class FrozenCorpusL2(unittest.TestCase):
             report = json.loads(proc.stdout)
             want = [c for c in self.corpus["cases"] if c["variant"] in variants][:2]
             self.assertEqual(report["checked"], sum(len(c["meta"]) for c in want), kind)
-            self.assertEqual(report["repos"], 2, kind)
+            # `--limit 2` limits cases, and two cases can be two variants of one repository:
+            # `cases_answered` is the one that must be 2, and `repos` is free to be 1.
+            self.assertEqual(report["cases_answered"], 2, kind)
+            self.assertLessEqual(report["repos"], report["cases_answered"], kind)
             # An always-True adapter is wrong about everything git does not ignore, so the
             # divergence list is a free sample of what was actually asked -- and every path in
             # it must have the shape of the half we selected.

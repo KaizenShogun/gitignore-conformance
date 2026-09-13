@@ -232,7 +232,13 @@ def report_l2(divergences, declined, declining, cases, args):
 
     if args.json:
         json.dump({
-            "level": 2, "repos": len(answered), "repos_in_corpus": len(cases),
+            # A level-2 case is one repo *per variant*, so cases outnumber repositories (99
+            # cases, 33 repos). Counting cases and calling them repos is how a corpus grows a
+            # third in the retelling; both numbers are here, each under its own name.
+            "level": 2,
+            "repos": len(set(c["repo"] for c in answered)),
+            "repos_in_corpus": len(set(c["repo"] for c in cases)),
+            "cases_answered": len(answered), "cases_in_corpus": len(cases),
             "checked": sum(totals.values()),
             "declining_cases": ["%s [%s]" % (r, v) for r, v in declining],
             "by_class": {c: {"cases": totals[c], "divergences": bad[c], "declined": skipped[c],
@@ -251,8 +257,9 @@ def report_l2(divergences, declined, declining, cases, args):
         if not divergences and not declined:
             return
 
-    print("level 2: %d of %d repositories answered, %d queries, oracle git.\n"
-          % (len(answered), len(cases), sum(totals.values())))
+    print("level 2: %d of %d cases answered, over %d repositories, %d queries, oracle git.\n"
+          % (len(answered), len(cases), len(set(c["repo"] for c in answered)),
+             sum(totals.values())))
     print("  %-18s %8s %8s %8s %9s %8s" %
           ("class", "cases", "wrong", "declined", "decisive", "wrong"))
     for cls in shown:
