@@ -1,0 +1,13 @@
+[package]
+name = "ig_probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# The subject. The numbers in the README were taken against the `ignore` crate as it stands in
+# ripgrep 14.1.1's tree; from crates.io you get the released crate, which is the one your own
+# program would depend on. If the two ever disagree, the bench will say so — that is its job.
+[dependencies]
+ignore = "0.4"
+
+[workspace]

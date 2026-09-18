@@ -33,11 +33,19 @@ DECLINED (`null`, never guessed):
   * a query that could not be materialised on disk -- when one query is a parent directory of
     another that has to be a file. Same rule as every filesystem-citizen adapter here.
 
-Two entry points, because a library is not automatically one subject. `--entry api` (default) asks
+Three entry points, because a library is not automatically one subject. `--entry api` (default) asks
 `IgnoreFilterManager.is_ignored` directly; `--entry porcelain` goes through
 `porcelain.check_ignore(..., no_index=True)`, which is dulwich's own `git check-ignore` and does
 its own directory-slash handling on the way. They should agree on this corpus -- the trees carry
 no index and the queries already carry their slashes -- and "should" is why both are runnable.
+
+`--entry prune` asks `IgnoreFilterManager.may_prune_directory`, added in 1.2.15 (#2411). It is a
+different question and it needs a different corpus: `is_ignored` answers `git check-ignore`, which
+calls `d/` ignored under a `d/*` pattern because `*` also matches the empty string, while the walk
+has to enter that directory or a `!d/keep` below it never fires. The `between` corpus asks the
+second question -- its oracle is the re-inclusion probe, "does git descend here?" -- so `prune` is
+the entry point to hold against it, and holding `is_ignored` against it measures the slash, not the
+library. Non-directory queries are DECLINED here: the method promises nothing about them.
 
 Where the code comes from: `--src <dir>` on this adapter's command line, else `$DULWICH_SRC`,
 else the installed package. The version is printed to stderr at startup; do not take it on faith
@@ -86,8 +94,8 @@ def _load_dulwich():
 
 
 ENTRY = (_pop_option(sys.argv, "--entry", "DULWICH_ENTRY") or "api").lower()
-if ENTRY not in ("api", "porcelain"):
-    sys.stderr.write("--entry must be 'api' or 'porcelain', got %r\n" % ENTRY)
+if ENTRY not in ("api", "porcelain", "prune"):
+    sys.stderr.write("--entry must be 'api', 'porcelain' or 'prune', got %r\n" % ENTRY)
     raise SystemExit(2)
 
 IGNORE_FILTER_MANAGER, REPO = _load_dulwich()
@@ -167,6 +175,25 @@ def ask_porcelain(repo, queries, undecidable):
     return [None if q in undecidable else (q in reported) for q in queries]
 
 
+def ask_prune(repo, queries, undecidable):
+    """`IgnoreFilterManager.may_prune_directory`: the question a walk asks, not check-ignore's.
+
+    Declines anything that is not a directory query -- the method takes a directory, and guessing
+    on its behalf is how an adapter starts answering for the library.
+    """
+    manager = IGNORE_FILTER_MANAGER.from_repo(repo)
+    if not hasattr(manager, "may_prune_directory"):
+        sys.stderr.write("this dulwich has no may_prune_directory (pre-1.2.15): declining all\n")
+        return [None] * len(queries)
+    out = []
+    for query in queries:
+        if query in undecidable or not query.endswith("/"):
+            out.append(None)
+            continue
+        out.append(bool(manager.may_prune_directory(query)))
+    return out
+
+
 def answer(request):
     queries = request["queries"]
     if request.get("level", 1) == 2:
@@ -182,6 +209,8 @@ def answer(request):
         try:
             if ENTRY == "api":
                 return ask_api(repo, queries, undecidable)
+            if ENTRY == "prune":
+                return ask_prune(repo, queries, undecidable)
             return ask_porcelain(repo, queries, undecidable)
         finally:
             repo.close()

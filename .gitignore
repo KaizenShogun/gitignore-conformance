@@ -9,3 +9,7 @@ node_modules/
 corpus/_cache*/
 # Scratch probes that live next to the code for an afternoon and answer one question.
 _*.py
+
+# Rust build output of `adapters/ig_probe/`. The source is the artefact; the binary is 30 s away.
+# `Cargo.lock` does ship: it pins the exact `ignore` the numbers were taken against.
+target/

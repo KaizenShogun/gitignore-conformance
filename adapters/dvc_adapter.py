@@ -37,6 +37,15 @@ real paths, so each request gets a temporary tree. Unlike black's, no walk is ne
 public "is this ignored?" entry point (`is_ignored_file` / `is_ignored_dir`, the two the local
 filesystem itself calls) and it is asked exactly that, with dvc's own defaults.
 
+Two entry points, because a corpus that asks about *prunability* ("does the tool descend into this
+directory?") is not answered by every door. `--entry api` (default) asks `is_ignored_dir` /
+`is_ignored_file`. `--entry walk` runs the real thing -- `DvcIgnoreFilter.walk(localfs, root)`, the
+generator `dvc.fs` uses -- and answers "prunable" for any directory the walk never reaches. Unlike
+dulwich, dvc has no separate prune door: `DvcIgnorePatterns.__call__` filters a walk's `dirs` with
+`self.matches(root, d, True)`, the same predicate `is_ignored_dir` ends in. The difference the two
+entries can still show is *ancestors*: `api` answers each path on its own, the walk never reaches a
+child of a pruned parent. Which one matches git is a measurement, not a reading.
+
 Where the code comes from: `--src <dir>` on this adapter's command line, else `$DVC_SRC`, else the
 installed package.
 """
@@ -78,6 +87,27 @@ def _load_dvc():
     return localfs, DvcIgnoreFilter
 
 
+def _entry(argv):
+    """`--entry api|walk`, popped out of argv, else $DVC_ENTRY, else api."""
+    i = 0
+    val = None
+    while i < len(argv):
+        if argv[i] == "--entry" and i + 1 < len(argv):
+            del argv[i]
+            val = argv.pop(i)
+            break
+        if argv[i].startswith("--entry="):
+            val = argv.pop(i).split("=", 1)[1]
+            break
+        i += 1
+    val = (val or os.environ.get("DVC_ENTRY") or "api").lower()
+    if val not in ("api", "walk"):
+        sys.stderr.write("--entry must be 'api' or 'walk', got %r\n" % val)
+        raise SystemExit(2)
+    return val
+
+
+ENTRY = _entry(sys.argv)
 LOCALFS, FILTER = _load_dvc()
 
 
@@ -151,6 +181,36 @@ def answer(request):
     return out
 
 
+def ask_walk(ignore_filter, root, queries, undecidable, request):
+    """`DvcIgnoreFilter.walk`: prunable == the walk never reaches the directory.
+
+    This is the question the `between` corpus asks, put to the code that actually prunes. A file
+    query is declined: "the walk did not list it" conflates ignored-file with pruned-parent, and
+    two causes behind one bit is not an answer.
+    """
+    seen = set()
+    try:
+        for r, _dirs, _files in ignore_filter.walk(LOCALFS, root):
+            rel = os.path.relpath(r, root).replace(os.sep, "/")
+            seen.add("" if rel == "." else rel)
+    except Exception as exc:
+        sys.stderr.write("dvc raised walking request %s: %s: %s\n"
+                         % (request.get("id"), type(exc).__name__, exc))
+        return [None] * len(queries)
+
+    out = []
+    for query in queries:
+        rel = query.rstrip("/")
+        if query in undecidable or _dvcs_own(query) or not query.endswith("/"):
+            out.append(None)
+            continue
+        if not os.path.isdir(os.path.join(root, rel)):
+            out.append(None)
+            continue
+        out.append(rel not in seen)
+    return out
+
+
 def verdicts(rules, queries, request):
     root = tempfile.mkdtemp(prefix="gic-dvc-")
     try:
@@ -163,6 +223,9 @@ def verdicts(rules, queries, request):
             sys.stderr.write("dvc raised building the filter for request %s: %s: %s\n"
                              % (request.get("id"), type(exc).__name__, exc))
             return [None] * len(queries)
+
+        if ENTRY == "walk":
+            return ask_walk(ignore_filter, root, queries, undecidable, request)
 
         out = []
         for query in queries:

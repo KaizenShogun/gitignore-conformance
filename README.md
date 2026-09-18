@@ -77,6 +77,40 @@ python3 gic.py --kind dir -- node adapters/node_ignore_adapter.js
 python3 gic.py --repo python/cpython --limit 20 -- ./my-adapter
 ```
 
+### One library, several doors
+
+A library is not a subject; an *entry point* is. Most of these projects answer the question more
+than one way, and the answers differ — that is where half the findings in this README come from, so
+the adapters take a flag instead of picking for you:
+
+| adapter | flag | what it asks |
+|---|---|---|
+| `ig_matcher_adapter.py` | `--api parents` *(default)* | `Gitignore::matched_path_or_any_parents` |
+| | `--api matched` | `Gitignore::matched` — 1,976 divergences where the other has 63 |
+| `dulwich_adapter.py` | `--entry api` *(default)* | `is_ignored`, which answers `git check-ignore` |
+| | `--entry prune` | `may_prune_directory`, which answers "does git walk in here?" |
+| | `--entry porcelain` | `porcelain.status`, what a caller actually gets |
+| `dvc_adapter.py` | `--entry api` *(default)* | `is_ignored_dir` |
+| | `--entry walk` | `DvcIgnoreFilter.walk` — a directory it never visits is pruned |
+| `libgit2_adapter.py` | `--entry api` *(default)* | `git_ignore_path_is_ignored` |
+| | `--entry walk` | `git_status_list_new` collapsing a pruned directory into one entry |
+| `go_git_adapter.py` | `--entry patterns` *(default)* | `Matcher.Match` |
+| | `--entry status` | `Status()`, which walks |
+
+Two of those need a compile first. The Rust one ships in [`adapters/ig_probe/`](adapters/ig_probe/)
+and pulls `ignore` from crates.io, so you don't need a ripgrep checkout to reproduce the number:
+
+```sh
+cargo build --release --manifest-path adapters/ig_probe/Cargo.toml   # ~30 s, ignore 0.4.33
+python3 gic.py --level 1 --corpus corpus/cases.json -- python3 adapters/ig_matcher_adapter.py
+```
+
+Note what `--entry walk` costs on the two subjects that have no public pruning API: the adapter has
+to plant a sentinel file inside each directory it asks about, because an empty directory is
+invisible to any walk and the run would come back all-`null` — a zero that only means nobody asked.
+`libgit2_adapter.py` then re-asks each candidate with a re-inclusion probe, since a collapsed entry
+means "nothing visible left inside", not "pruned". I got that wrong twice before I got it right.
+
 The adapter protocol is one page: [`PROTOCOL.md`](PROTOCOL.md). Your process reads a line of JSON
 from stdin (`patterns` + `queries`) and writes a line of JSON to stdout (`ignored`). That's the
 whole contract, so any language qualifies — the bench never imports your library, it talks to a
