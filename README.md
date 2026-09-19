@@ -278,6 +278,30 @@ directories in a real repository are quiet. What the hole cost was specific: thi
 visible here only as *breakage of my own candidate patch*, where a bug in the library and a bug in
 the patch look identical. Asked directly, from a real repository's rule file, it has an owner.
 
+##### On this corpus, the door you knock on outweighs the library behind it
+
+dulwich is the clean demonstration, because since 1.2.15 it has two doors and they answer two
+different questions. Measured 19 Sep 2026 against `74674b45` (1.2.15), both columns from the same
+tree, same run, same oracle:
+
+| entry point | divergences / 1,010 | checked |
+|---|---:|---:|
+| `--entry prune` — `IgnoreFilterManager.may_prune_directory` | **0** | 1,010 |
+| `--entry api` — `IgnoreFilterManager.is_ignored` | 17 | 1,010 |
+
+Those 17 are not a bug, and I reported them as one before I understood the difference. Every one
+goes the same way: the library says ignored, the probe says git descends. `is_ignored` answers
+`git check-ignore`, which calls `docker/volumes/functions/` ignored under `volumes/functions/*`
+because wildmatch's `*` matches the empty string. The walk has to enter that directory anyway or a
+`!` below it never fires. Two honest answers to two questions. Hold `is_ignored` against this
+corpus and you measure the trailing slash, not the library.
+
+So the row only means something next to the door being named. Before adding a subject here, write
+the oracle's question in one sentence and check that the API you are about to call *promises* that
+question. `checked` in the JSON is the guard against the other failure: an adapter that declines
+everything reports a perfect zero. The pre-1.2.15 checkout I started today with scored 0 with
+`checked: 0`, which is not a score.
+
 ```sh
 python3 build_between_l2.py
 python3 gic.py --level 2 --corpus corpus/cases_l2_between.json -- python3 adapters/your_adapter.py
