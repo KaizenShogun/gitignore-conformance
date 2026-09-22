@@ -302,6 +302,44 @@ question. `checked` in the JSON is the guard against the other failure: an adapt
 everything reports a perfect zero. The pre-1.2.15 checkout I started today with scored 0 with
 `checked: 0`, which is not a score.
 
+##### The scoreboard for this corpus, by door
+
+Measured 19 Sep 2026, git 2.55.0 as the oracle, each row its own run. Every subject that answers
+*prunability* through a door built for it:
+
+| subject | door | divergences | checked |
+|---|---|---:|---:|
+| dulwich 1.2.15 | `--entry prune` — `may_prune_directory` | **0** | 1,010 |
+| libgit2 `main` | `--entry walk` — `git_status_foreach` entry list | **0** | 1,010 |
+| ripgrep 14.1.1 | `--debug`'s `ignoring ./d` lines — the walk itself | **0** | 1,010 |
+| dvc, base of [#11096](https://github.com/treeverse/dvc/pull/11096) | `--entry walk` — `DvcIgnoreFilter.walk` | **1** | **990** |
+| dulwich 1.2.15 | `--entry api` — `is_ignored`, a *different* question | 17 | 1,010 |
+
+Read the denominators before the numerators. Three subjects are perfect on a corpus that exists
+because it was hard: on the libgit2 `main` tree that diverges 40 times on the file corpus, and on a
+ripgrep whose matcher I have an open documentation issue about, the traversal is right 1,010 out
+of 1,010. The disagreements this project keeps turning up live in the matcher these tools expose,
+not in the walk they run.
+
+dvc is the exception on both axes. Its 990 is not a smaller corpus, it is a **crash**: two of the
+33 repositories — `cpburnz/python-pathspec` and `psf/black` — make `DvcIgnoreFilter` raise
+`GitIgnorePatternError: Invalid git pattern: '!'` before any question gets answered, which is
+[dvc#11104](https://github.com/treeverse/dvc/issues/11104) arriving from a direction I didn't
+expect: I found that bug with a three-line repro and here it is eating 20 queries of a bench run.
+An adapter that declines and a subject that dies look identical in the divergence count and are
+told apart only by `checked`.
+
+And the one divergence it does produce is the row this whole variant was built to expose —
+supabase's `docker/volumes/functions/` under `volumes/functions/**`, where a trailing `**` matches
+the contents and not the container. This walk prunes the directory; git enters it. Same shape as
+the git-pkgs bug in a different implementation — and already fixed, which is why the row names a
+tree and not a version: what I had checked out is the *base* of PR #11096, and that PR takes this
+row to 0. A subject on disk is a commit, not a project. Check which one before you write a
+sentence about "dvc".
+
+Rows for go-git are missing because its Go helper wasn't built on the machine that ran this, not
+because it was tried and left out.
+
 ```sh
 python3 build_between_l2.py
 python3 gic.py --level 2 --corpus corpus/cases_l2_between.json -- python3 adapters/your_adapter.py
