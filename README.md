@@ -834,6 +834,57 @@ commits and no index: not `Add`, not the sparse-checkout paths, not `ignorecase`
 queries are declined under `Status()`, not guessed — `Status` reports files, and inventing a row
 for a directory would be my rule, not go-git's.
 
+#### 22 Sep 2026: there is a third door, and it is the one that answers best
+
+I spent three sessions writing that `main` has the right machinery and only asks the wrong layer,
+and I was leaning on a number that was not comparable. `Scope.Excluded()` — the `may_prune_directory`
+of go-git, the thing `worktree_status.go` calls before descending — scores **0 divergences** on the
+1,010-query pruning corpus, but it only speaks about directories: over the level-2 corpus it
+declines 66 whole cases (the `files` and `inside` variants of all 33 repositories) and answers
+2,239 queries. Eleven of the matcher's twelve divergences are `kind=file`. A zero on a different
+denominator is not a paired contrast.
+
+The door that *is* comparable was in the same file, one `grep '^func'` away: `Scope.Match(path
+[]string, isDir bool)`, whose doc says that below an excluded directory it reports true without
+consulting any pattern. That one answers files, so it lands on the same 8,953 queries. Standing in
+the parent directory's scope and calling `Match` on the component list — which is what a walk holds
+when it looks at an entry — on commit `0f3a0a2c`:
+
+| door on `main` | divergences / 8,953 |
+|---|---:|
+| `ReadPatterns` + `Matcher.Match` (the layer go-git documents) | **12** |
+| `Scope.Descend` + `Scope.Match` | **5** |
+| `Scope.Match`, with `\|\| isDir` deleted from `pattern.go:511` | 8 |
+| `Scope.Match` on top of [#2311](https://github.com/go-git/go-git/pull/2311) | 25 |
+
+Sets, not counts: `Scope.Match` fixes **8** of the matcher's 12 and breaks **1**, with no patch at
+all. The eight it fixes are two families already described above — all four `ollama` rows of
+`.vscode` + `!.vscode/extensions.json`, and four `supabase` rows under `volumes/functions/**` and
+`volumes/functions/main/**`. The one it breaks is `docker/volumes/functions/deno.jsonsample`
+itself, and that is not an accident of the harness: it is exactly the `Status()` regression
+documented two paragraphs up, seen at its source. The shortcut "below an excluded directory,
+answer true without consulting patterns" is wrong precisely when the ancestor was excluded by
+`dir/**`, which in git never excluded the directory itself, so the negation is still allowed to
+fire. Same machinery, same single broken row, reached without going through the walk.
+
+The four it does **not** fix are one family, all of `supabase`, all under
+`**/*/generated/**/*` — content below `apps/docs/sample/generated/.gitkeep` that git ignores and
+both doors report as not ignored. The corpus never asks about that ancestor as a directory, so
+why the `Descend` chain does not carry its exclusion is not yet measured, and I am not going to
+guess it here.
+
+Two things follow. First, the patch I was about to propose is worse than no patch: deleting
+`|| isDir` from `pattern.go:511` is clean through the matcher (12 → 12, identical set) and fixes
+`Scope.Excluded` (1 → 0), but through this door it goes **5 → 8**, taking the four supabase fixes
+with it. Three doors, three different verdicts on one line of code. Second, the interesting result
+is not a bug report at all: the best-scoring gitignore evaluator in go-git is already written and
+merged, and the layer users are told to call scores 12 where it scores 5. What is missing is not a
+fix — it is a door.
+
+Reproduce with `adapters/ggscope.go` (`--entry scope` for `Excluded`, `--entry scopematch` for
+`Match`), built against a tree that has `Scope`; the release does not, so on this door v5.19.2
+does not give a worse number, it gives no number.
+
 #### Should go-git keep its matcher or delegate to a library?
 
 That question has been open in #877 since March, and it is the one case here where the bench gets to

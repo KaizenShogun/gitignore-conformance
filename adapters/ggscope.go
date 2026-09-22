@@ -22,6 +22,12 @@
 // Directory queries only; a file query is declined (null), because a file is not descended into
 // and inventing a row for it would be my rule, not go-git's.
 //
+// `--entry scopematch` is the same state asked the OTHER question: `Scope.Match(path, isDir)`, the
+// per-entry verdict a walk asks while standing in the parent directory. It answers files too, so
+// it is the only door on this library comparable to the flat matcher over the whole corpus. Same
+// derivation -- the scope of the PARENT, then Match on the full component list -- because that is
+// what a walk holds when it looks at an entry.
+//
 // Build it against a go-git tree that has Scope (module path v6):
 //
 //	mkdir -p /tmp/ggs && cp ggscope.go /tmp/ggs/main.go && cd /tmp/ggs
@@ -122,7 +128,62 @@ func answerScope(root string, queries []string, declined map[string]bool) ([]*bo
 	return out, nil
 }
 
-func report() {
+// answerScopeMatch asks the per-entry question instead of the prune question: stand in the
+// parent directory with its Scope, and call Match on the full component list. Unlike Excluded()
+// this has an answer for files, so it lands on the same 8,953 queries as the flat matcher and the
+// two can be held against each other query by query.
+func answerScopeMatch(root string, queries []string, declined map[string]bool) ([]*bool, error) {
+	fs := osfs.New(root)
+	base, err := gitignore.RootPatterns(fs)
+	if err != nil {
+		base = nil
+	}
+	cache := map[string]*gitignore.Scope{"": gitignore.NewScope(base)}
+
+	var scopeFor func(parts []string) (*gitignore.Scope, error)
+	scopeFor = func(parts []string) (*gitignore.Scope, error) {
+		key := strings.Join(parts, "/")
+		if s, ok := cache[key]; ok {
+			return s, nil
+		}
+		parent, err := scopeFor(parts[:len(parts)-1])
+		if err != nil {
+			return nil, err
+		}
+		dir := append([]string(nil), parts...)
+		child, err := parent.Descend(dir, func() ([]gitignore.Pattern, error) {
+			return gitignore.DirPatterns(fs, dir)
+		})
+		if err != nil {
+			return nil, err
+		}
+		cache[key] = child
+		return child, nil
+	}
+
+	out := make([]*bool, 0, len(queries))
+	for _, q := range queries {
+		if declined[q] {
+			out = append(out, nil)
+			continue
+		}
+		isDir := strings.HasSuffix(q, "/")
+		trimmed := strings.Trim(q, "/")
+		if trimmed == "" {
+			out = append(out, nil)
+			continue
+		}
+		parts := strings.Split(trimmed, "/")
+		scope, err := scopeFor(parts[:len(parts)-1])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, boolp(scope.Match(parts, isDir)))
+	}
+	return out, nil
+}
+
+func report(entry string) {
 	version := "unknown"
 	if bi, ok := debug.ReadBuildInfo(); ok {
 		for _, dep := range bi.Deps {
@@ -131,7 +192,11 @@ func report() {
 			}
 		}
 	}
-	fmt.Fprintf(os.Stderr, "ggscope: %s, entry=scope (Scope.Descend + Excluded)\n", version)
+	door := "Scope.Descend + Excluded"
+	if entry == "scopematch" {
+		door = "Scope.Descend + Match"
+	}
+	fmt.Fprintf(os.Stderr, "ggscope: %s, entry=%s (%s)\n", version, entry, door)
 }
 
 func main() {
@@ -143,11 +208,11 @@ func main() {
 			entry = strings.SplitN(a, "=", 2)[1]
 		}
 	}
-	if entry != "scope" {
-		fmt.Fprintf(os.Stderr, "ggscope only answers --entry scope, got %q\n", entry)
+	if entry != "scope" && entry != "scopematch" {
+		fmt.Fprintf(os.Stderr, "ggscope answers --entry scope|scopematch, got %q\n", entry)
 		os.Exit(2)
 	}
-	report()
+	report(entry)
 
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 1024*1024), 64*1024*1024)
@@ -169,7 +234,11 @@ func main() {
 			declined[d] = true
 		}
 		resp := response{ID: req.ID}
-		ignored, err := answerScope(req.Root, req.Queries, declined)
+		answer := answerScope
+		if entry == "scopematch" {
+			answer = answerScopeMatch
+		}
+		ignored, err := answer(req.Root, req.Queries, declined)
 		if err != nil {
 			resp.Error = err.Error()
 		} else {
