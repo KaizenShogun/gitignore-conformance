@@ -441,6 +441,22 @@ Read the numbers carefully, because the raw ones lie in both directions:
   `gen_python_files` with black's own defaults, and against my adapter; and each pattern was replayed
   through `pathspec` alone, which answers as git does when it is handed the rule file that should
   decide.
+* **A fix for that line is open upstream, and the bench says it works: 23 → 4.**
+  [psf/black#5382](https://github.com/psf/black/pull/5382) (not mine — RRXXZZYY opened it, closing
+  #5376) replaces
+  the short-circuit with a last-explicit-match walk: `pattern.check_file(...).include`, keeping the
+  last non-`None` answer instead of returning on the first `True`. Measured here on 23 Sep 2026, two
+  real source trees, main `8947c48e` against the PR head `c750aa7d`, third-party dependencies held
+  fixed from the 26.5.1 wheel so only black's own code moves: **level 2 goes 23 → 4, nineteen gone,
+  zero new**, and level 1 is untouched at 48 either way, which is what you want from a change that
+  only concerns how a *tree* of rule files is combined. Cross-check, because one build proves
+  nothing: the hunk applied in isolation to the 26.5.1 wheel this bench measures — its `before` text
+  is byte-identical — gives the same 23 → 4, the same nineteen rows. So main's drift since the wheel
+  contributes none of it. Of the four survivors, three are the `nodejs/node` `/node_modules` row
+  below and the two `inside` queries derived from it, which belong to the library and are expected
+  to survive; the fourth is supabase's `!volumes/functions/deno.json*`, which was in the group of
+  eight above and is **not** fixed by this change. I have not attributed it, and this file does not
+  guess.
 * **The ninth is the library's, and it goes the other way.** `/node_modules` in nodejs/node: git
   ignores, black doesn't. `pathspec`'s `SimpleGiBackend.match_file` answers differently forward and
   in reverse, and the reverse — the direction black uses — is the one that diverges from git. Filed
