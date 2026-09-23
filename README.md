@@ -313,6 +313,7 @@ Measured 19 Sep 2026, git 2.55.0 as the oracle, each row its own run. Every subj
 | libgit2 `main` | `--entry walk` — `git_status_foreach` entry list | **0** | 1,010 |
 | ripgrep 14.1.1 | `--debug`'s `ignoring ./d` lines — the walk itself | **0** | 1,010 |
 | dvc, base of [#11096](https://github.com/treeverse/dvc/pull/11096) | `--entry walk` — `DvcIgnoreFilter.walk` | **1** | **990** |
+| go-git `main` `0f3a0a2c` | `--entry scope` — `Scope.Excluded`, what `worktree_status.go` calls | **1** | 1,010 |
 | dulwich 1.2.15 | `--entry api` — `is_ignored`, a *different* question | 17 | 1,010 |
 
 Read the denominators before the numerators. Three subjects are perfect on a corpus that exists
@@ -337,8 +338,12 @@ tree and not a version: what I had checked out is the *base* of PR #11096, and t
 row to 0. A subject on disk is a commit, not a project. Check which one before you write a
 sentence about "dvc".
 
-Rows for go-git are missing because its Go helper wasn't built on the machine that ran this, not
-because it was tried and left out.
+go-git's row was missing here until 23 Sep 2026 because its Go helper wasn't built on the machine
+that ran the rest; measured now, all **three** of its doors give the same 1 / 1,010 — and the same
+row, `supabase`'s `docker/volumes/functions/` under a trailing `**`, the one this variant was built
+to expose. Three entry points failing identically is not three bugs: it puts the defect below all
+of them, in `pattern.go`, which is where the [third door section](#22-sep-2026-there-is-a-third-door-and-it-is-the-one-that-answers-best)
+picks it up on the file corpus.
 
 ```sh
 python3 build_between_l2.py
@@ -885,9 +890,10 @@ fire. Same machinery, same single broken row, reached without going through the 
 
 The four it does **not** fix are one family, all of `supabase`, all under
 `**/*/generated/**/*` — content below `apps/docs/sample/generated/.gitkeep` that git ignores and
-both doors report as not ignored. The corpus never asks about that ancestor as a directory, so
-why the `Descend` chain does not carry its exclusion is not yet measured, and I am not going to
-guess it here.
+both doors report as not ignored. I wrote here on 22 Sep 2026 that the corpus never asks about that
+ancestor as a directory, so the `Descend` chain was the obvious suspect and I wasn't going to guess.
+Asked directly the next day, it isn't: the ancestors are clean and the defect is a
+[third bug in the matcher](#a-third-defect-a--followed-by-a-plain-), reducible to one rule line.
 
 Two things follow. First, the patch I was about to propose is worse than no patch: deleting
 `|| isDir` from `pattern.go:511` is clean through the matcher (12 → 12, identical set) and fixes
@@ -900,6 +906,45 @@ fix — it is a door.
 Reproduce with `adapters/ggscope.go` (`--entry scope` for `Excluded`, `--entry scopematch` for
 `Match`), built against a tree that has `Scope`; the release does not, so on this door v5.19.2
 does not give a worse number, it gives no number.
+
+##### A third defect: `**` followed by a plain `*`
+
+The four survivors are not an inheritance problem, and the door makes no difference to them. Asked
+on 23 Sep 2026 about all **nine** ancestors of those four paths, on the adapter's own tree: git's
+re-inclusion probe says git descends into all nine, `check-ignore` says not-ignored for all nine,
+and all three doors agree with git on all nine. Nothing wrong is being inherited, so `Scope.Match`'s
+shortcut — below an excluded directory, answer true without consulting patterns — never fires here.
+That leaves the matcher, and it reduces to a single rule line. git 2.55.0 against the two doors,
+one pattern per tree:
+
+| pattern | query | git | `Matcher.Match` | `Scope.Match` | |
+|---|---|:--:|:--:|:--:|---|
+| `**/*/generated/**/*` | `a/b/generated/c/d` | ignored | **no** | **no** | supabase's line, reduced |
+| `**/*/generated/**/*` | `a/b/generated/c` | ignored | **no** | **no** | one level less below |
+| `**/*/generated/**/*` | `a/generated/c/d` | ignored | ignored | ignored | the `**` matching *empty* is fine |
+| `**/generated/**/*` | `a/b/generated/c/d` | ignored | ignored | ignored | control: no `*` after the `**` |
+| `*/generated/**/*` | `a/b/generated/c/d` | not | not | not | control: no leading `**` |
+| `**/*/generated/**` | `a/b/generated/c/d` | ignored | **no** | **no** | control: not the trailing `/*` |
+| `a/b/generated/**/*` | `a/b/generated/c/d` | ignored | ignored | ignored | control: anchored |
+
+The ingredient is a `**` that has to consume **at least one** component with a plain `*` behind it.
+Row three is the control that pins it: drop the path one level and the `**` can match empty, and
+go-git is right again. Row four drops the `*` and it is right again. Row six keeps the bare `**` at
+the end and it is still wrong, so the trailing `/*` isn't it either. A `*` segment can match a whole
+component, so it competes with the `**` for the same one; go-git commits to one split and never
+tries the others. This is a third defect in `pattern.go`, distinct from the `|| isDir` on line 511
+above and from the `globMatch` of [#2112](https://github.com/go-git/go-git/issues/2112).
+
+**And now the part that argues against my own finding.** The shape is rare. Counting the rule lines
+in the corpus where a `**` segment sits directly beside a plain `*` segment: **13 lines in 2 of the
+33 repositories** — nine in `pytorch/pytorch`, four in `supabase/supabase`. Only supabase's fire,
+because pytorch writes `*/**/*.pyc`, where the `*` comes first and the `**` is free to match empty.
+On the level-1 corpus, where each query carries the single pattern that decides it, those 4 pytorch
+queries are all answered correctly, and so are all 29 queries under the wider shape "`**` followed
+by any wildcard segment" — `**/.hg*` and friends are never ambiguous, since `.hg*` can only take the
+last component. So: a real bug with a minimal repro, worth four queries in 8,953, in one repository
+out of 33. That is the honest size of it, and it is the number I would lead with if I were asking
+somebody to spend an afternoon on this.
 
 #### Should go-git keep its matcher or delegate to a library?
 
