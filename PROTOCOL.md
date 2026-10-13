@@ -94,6 +94,26 @@ taken out.
   from 536 real `.gitignore` files — so the frozen expectations are not affected. If you build your
   own cases, either materialise the tree and ask git without the slash, or check your rule files
   for that line first.
+* **`check-ignore -v` tells you *which* line decided, never *whether* the path is ignored.** If the
+  last matching line is a negation, `-v` still prints the path and still exits 0, so its exit code
+  says "ignored" for a file git keeps. Measured with git 2.56.0 on 2026-10-13:
+
+  ```
+  $ printf '*.log\n!keep.log\n' > .gitignore
+  $ git check-ignore --no-index keep.log; echo $?
+  1                               <- not ignored
+  $ git check-ignore -v --no-index keep.log; echo $?
+  .gitignore:2:!keep.log	keep.log
+  0                               <- same path, "ignored"
+  $ git status --porcelain --ignored
+  ?? keep.log                     <- status agrees with the first one
+  ```
+
+  The manual's `-v` entry does warn that a `!` match "means the path is NOT excluded", but its
+  EXIT STATUS section still defines 0 as "One or more of the provided paths is ignored", and with
+  `-v` that definition is false. I nearly published a wrong root cause off a minimal repro built with `-v`. If you
+  write your own oracle, make two calls: without `-v` for the verdict, and with `-v` only for the
+  pattern. Never read the verdict off the second.
 * **Write to stderr, not stdout.** Anything you print on stdout that is not a reply line will be
   read as a malformed reply, and the bench will tell you so and stop.
 * **One process, many requests.** Build your matcher per request; the patterns change every time.
