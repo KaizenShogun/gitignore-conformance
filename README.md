@@ -75,6 +75,7 @@ cd gitignore-conformance
 python3 gic.py -- python3 adapters/pathspec_adapter.py     # exit 0 if you agree with git, 1 if not
 python3 gic.py --kind dir -- node adapters/node_ignore_adapter.js
 python3 gic.py --repo python/cpython --limit 20 -- ./my-adapter
+python3 nested_negation.py -- python3 adapters/black_adapter.py   # ten hand-built trees; needs git
 ```
 
 ### One library, several doors
@@ -462,6 +463,45 @@ Read the numbers carefully, because the raw ones lie in both directions:
   to survive; the fourth is supabase's `!volumes/functions/deno.json*`, which was in the group of
   eight above and is **not** fixed by this change. I have not attributed it, and this file does not
   guess.
+* **14 Oct 2026: "the bench says it works" was too strong — the corpus can't see the regression.**
+  By now four PRs target #5376. All four clear the corpus about equally well: level 2 goes 23 → 4
+  for [#5382](https://github.com/psf/black/pull/5382) (`c750aa7d`),
+  [#5503](https://github.com/psf/black/pull/5503) (`2a756adf`) and
+  [#5535](https://github.com/psf/black/pull/5535) (`c56396c3`), and 23 → **1** for
+  [#5453](https://github.com/psf/black/pull/5453) (`28544160`), which also clears the three
+  `nodejs/node` rows; supabase's `deno.json*` row survives in all four, and none adds a new one.
+  Then a reviewer on #5453 pointed at a shape that 33 real repositories almost never contain: a
+  nested negation that re-includes a **directory**, plus an unrelated glob in the ancestor that must
+  still win for a file inside it:
+
+  ```
+  .gitignore       build_cache
+                   *_pb2.py
+  pkg/.gitignore   !playground/build_cache
+  ```
+
+  git ignores `pkg/playground/build_cache/msg_pb2.py` (by `*_pb2.py`), and so does black's `main`.
+  #5382, #5503 and #5535 all **keep** it, so black would start formatting a generated file that it
+  leaves alone today. The cause is the same in all three: they walk deepest-first and stop at the
+  first rule file with an opinion, and `pathspec`'s `check_file` lets `!playground/build_cache`
+  answer for paths *under* the directory too. So the deeper file decides, and the root's `*_pb2.py`
+  never gets asked. The approach I suggested in the issue on 3 Sep has exactly this flaw; #5535 follows
+  it closely. It was measured on this corpus, and this corpus has no such tree.
+  [`nested_negation.py`](nested_negation.py) asks ten of these on purpose, with git as the oracle
+  (`ls-files --others --exclude-standard`, one real repository per tree), through the same black
+  adapter. Each source tree was the PR head fetched on 14 Oct 2026, with dependencies from PyPI that
+  day (pathspec 1.1.1) and git 2.56.0:
+
+  | black | the 10 trees (25 queries) | wrong |
+  |---|---:|---|
+  | `main` `11cff131` | 18 / 25 | the seven #5376 re-inclusions |
+  | #5382 · #5503 · #5535 | 23 / 25 | `msg_pb2.py` in F2 and F3, which `main` gets right |
+  | #5453 | **25 / 25** | — |
+
+  This is the walk layer (`gen_python_files`) driven by the adapter, not the CLI; the reviewer's
+  report covers the CLI side. Twenty-five queries prove less than 8,773, and they're only worth
+  something because they're the ones the 8,773 leave out. If you're fixing a walker for nested
+  negations, run both.
 * **The ninth is the library's, and it goes the other way.** `/node_modules` in nodejs/node: git
   ignores, black doesn't. `pathspec`'s `SimpleGiBackend.match_file` answers differently forward and
   in reverse, and the reverse — the direction black uses — is the one that diverges from git. Filed
